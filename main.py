@@ -5,99 +5,343 @@ st.set_page_config(page_title="Advanced Resume Builder", layout="wide")
 
 builder = ResumeBuilder()
 
-st.title("📄 Advanced Resume Builder with Live Preview")
-
-# Custom CSS for better preview styling
+# Glassmorphism Theme CSS
 st.markdown("""
 <style>
-    .preview-container {
-        background-color: white;
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body, [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    [data-testid="stMainBlockContainer"] {
+        background: transparent;
+    }
+
+    .main {
+        background: transparent;
+    }
+
+    /* Glassmorphism Container */
+    .glass-container {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 20px;
         padding: 40px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        margin-bottom: 30px;
+    }
+
+    .glass-box {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 15px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(31, 38, 135, 0.2);
+    }
+
+    .glass-input-box {
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 12px;
+        padding: 15px 20px;
+        transition: all 0.3s ease;
+    }
+
+    .glass-input-box:focus-within {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: rgba(255, 255, 255, 0.35);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+
+    /* Headings */
+    h1 {
+        color: white;
+        text-align: center;
+        font-size: 3.5rem;
+        font-weight: 700;
+        margin-bottom: 10px;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        letter-spacing: 1px;
+    }
+
+    .tagline {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 1.1rem;
+        margin-bottom: 40px;
+        font-weight: 300;
+    }
+
+    h2 {
+        color: white;
+        font-size: 1.8rem;
+        margin-bottom: 25px;
+        font-weight: 600;
+        text-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+
+    h3 {
+        color: rgba(255, 255, 255, 0.95);
+        font-size: 1.3rem;
+        margin-bottom: 15px;
+        font-weight: 600;
+    }
+
+    /* Streamlit Input Override */
+    input, textarea, select {
+        background: rgba(255, 255, 255, 0.1) !important;
+        backdrop-filter: blur(5px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        color: white !important;
+        border-radius: 10px !important;
+        padding: 12px 16px !important;
+        font-size: 1rem !important;
+        transition: all 0.3s ease !important;
+    }
+
+    input::placeholder, textarea::placeholder {
+        color: rgba(255, 255, 255, 0.6) !important;
+    }
+
+    input:focus, textarea:focus, select:focus {
+        background: rgba(255, 255, 255, 0.15) !important;
+        border-color: rgba(255, 255, 255, 0.4) !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+        outline: none !important;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 12px !important;
+        padding: 12px 32px !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3) !important;
+    }
+
+    .stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5) !important;
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%) !important;
+    }
+
+    .stButton > button:active {
+        transform: translateY(0) !important;
+    }
+
+    /* Expander */
+    [data-testid="stExpander"] {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 12px !important;
+    }
+
+    .streamlit-expanderHeader {
+        color: white !important;
+        font-weight: 600 !important;
+    }
+
+    /* Selectbox */
+    [data-baseweb="select"] {
+        background: rgba(255, 255, 255, 0.1) !important;
+    }
+
+    [data-baseweb="select"] input {
+        background: rgba(255, 255, 255, 0.1) !important;
+        color: white !important;
+    }
+
+    /* Success/Error Messages */
+    .stSuccess {
+        background: rgba(76, 175, 80, 0.2) !important;
+        border: 1px solid rgba(76, 175, 80, 0.4) !important;
+        color: #e8f5e9 !important;
+        border-radius: 12px !important;
+    }
+
+    .stError {
+        background: rgba(244, 67, 54, 0.2) !important;
+        border: 1px solid rgba(244, 67, 54, 0.4) !important;
+        color: #ffebee !important;
+        border-radius: 12px !important;
+    }
+
+    /* Section Label */
+    .section-label {
+        color: rgba(255, 255, 255, 0.95);
+        font-weight: 600;
+        font-size: 0.95rem;
+        display: block;
+        margin-bottom: 8px;
+    }
+
+    /* Form Input Container */
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    /* Column Layout */
+    .column-container {
+        display: flex;
+        gap: 20px;
+    }
+
+    /* Divider */
+    hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.3), rgba(255,255,255,0)) !important;
+        margin: 30px 0 !important;
+    }
+
+    /* Preview Container */
+    .preview-container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 15px;
+        padding: 40px;
+        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
         color: #333;
         font-family: 'Arial', sans-serif;
         min-height: 800px;
     }
+
     .preview-header {
         text-align: center;
-        border-bottom: 3px solid #2c3e50;
+        border-bottom: 3px solid #667eea;
         padding-bottom: 20px;
         margin-bottom: 20px;
     }
+
     .preview-name {
         font-size: 32px;
         font-weight: bold;
-        color: #2c3e50;
+        color: #667eea;
         margin-bottom: 5px;
     }
+
     .preview-title {
         font-size: 18px;
         color: #555;
         margin-bottom: 10px;
     }
+
     .preview-contact {
         font-size: 14px;
         color: #666;
         line-height: 1.6;
     }
+
     .preview-section {
         margin-top: 25px;
     }
+
     .preview-section-title {
         font-size: 20px;
         font-weight: bold;
-        color: #2c3e50;
-        border-bottom: 2px solid #3498db;
+        color: #667eea;
+        border-bottom: 2px solid #764ba2;
         padding-bottom: 5px;
         margin-bottom: 15px;
     }
+
     .preview-item {
         margin-bottom: 15px;
     }
+
     .preview-item-header {
         display: flex;
         justify-content: space-between;
         margin-bottom: 5px;
     }
+
     .preview-item-title {
         font-weight: bold;
-        color: #2c3e50;
+        color: #333;
         font-size: 16px;
     }
+
     .preview-item-subtitle {
         color: #555;
         font-size: 14px;
         margin-bottom: 5px;
     }
+
     .preview-item-date {
         color: #777;
         font-size: 14px;
         font-style: italic;
     }
+
     .preview-text {
         color: #555;
         font-size: 14px;
         line-height: 1.6;
         margin-bottom: 8px;
     }
+
     .preview-list {
         margin-left: 20px;
         color: #555;
         font-size: 14px;
         line-height: 1.8;
     }
+
     .preview-skills {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
     }
+
     .preview-skill-tag {
-        background-color: #ecf0f1;
-        padding: 5px 12px;
-        border-radius: 5px;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+        border: 1px solid rgba(102, 126, 234, 0.3);
+        padding: 6px 14px;
+        border-radius: 8px;
         font-size: 13px;
-        color: #2c3e50;
+        color: #667eea;
+        font-weight: 500;
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+        h1 {
+            font-size: 2.5rem;
+        }
+
+        .glass-container {
+            padding: 25px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        h1 {
+            font-size: 2rem;
+        }
+
+        .glass-container {
+            padding: 20px;
+        }
+
+        h2 {
+            font-size: 1.4rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -114,213 +358,316 @@ if "projects" not in st.session_state:
 if "education" not in st.session_state:
     st.session_state.education = []
 
+# Main Title
+st.markdown('<h1>📄 Resume Builder Pro</h1>', unsafe_allow_html=True)
+st.markdown('<p class="tagline">Create your professional resume with live preview</p>', unsafe_allow_html=True)
+
 # Create two main columns: Form (left) and Preview (right)
-form_col, preview_col = st.columns([3, 2])
+form_col, preview_col = st.columns([3, 2], gap="large")
 
 with form_col:
-    st.subheader("Fill in Your Information")
-
     # -------------------------------------------------------
-    # PERSONAL INFORMATION
+    # PERSONAL INFORMATION SECTION
     # -------------------------------------------------------
-    st.header("Personal Information")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>👤 Personal Information</h2>', unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2, gap="medium")
 
     with col1:
-        full_name = st.text_input("Full Name")
-        email = st.text_input("Email")
-        phone = st.text_input("Phone")
+        st.markdown('<label class="section-label">Full Name</label>', unsafe_allow_html=True)
+        full_name = st.text_input("", placeholder="John Doe", key="full_name")
+
+        st.markdown('<label class="section-label">Email Address</label>', unsafe_allow_html=True)
+        email = st.text_input("", placeholder="john@example.com", key="email")
+
+        st.markdown('<label class="section-label">Phone Number</label>', unsafe_allow_html=True)
+        phone = st.text_input("", placeholder="+1 (555) 123-4567", key="phone")
 
     with col2:
-        location = st.text_input("Location")
-        linkedin = st.text_input("LinkedIn URL")
-        portfolio = st.text_input("Portfolio Website")
+        st.markdown('<label class="section-label">Location</label>', unsafe_allow_html=True)
+        location = st.text_input("", placeholder="New York, USA", key="location")
 
-    title = st.text_input("Professional Title")
+        st.markdown('<label class="section-label">LinkedIn URL</label>', unsafe_allow_html=True)
+        linkedin = st.text_input("", placeholder="linkedin.com/in/yourname", key="linkedin")
+
+        st.markdown('<label class="section-label">Portfolio Website</label>', unsafe_allow_html=True)
+        portfolio = st.text_input("", placeholder="yourportfolio.com", key="portfolio")
+
+    st.markdown('<label class="section-label">Professional Title</label>', unsafe_allow_html=True)
+    title = st.text_input("", placeholder="e.g., Full Stack Developer", key="title")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
-    # PROFESSIONAL SUMMARY
+    # PROFESSIONAL SUMMARY SECTION
     # -------------------------------------------------------
-    st.header("Professional Summary")
-    summary = st.text_area("Write your professional summary", height=150)
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>✨ Professional Summary</h2>', unsafe_allow_html=True)
+
+    st.markdown('<label class="section-label">Write a brief overview of your professional background</label>', unsafe_allow_html=True)
+    summary = st.text_area("", placeholder="Share your professional journey, key skills, and career goals...", height=120, key="summary")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # EXPERIENCE SECTION
     # -------------------------------------------------------
-    st.header("Work Experience")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>💼 Work Experience</h2>', unsafe_allow_html=True)
 
-    if st.button("➕ Add Experience"):
+    if st.button("➕ Add Experience", use_container_width=True, key="add_exp_btn"):
         st.session_state.experience.append({})
         st.rerun()
 
     for i, exp in enumerate(st.session_state.experience):
-        with st.expander(f"Experience {i+1}", expanded=True):
+        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
 
-            col1, col2 = st.columns([5, 1])
-            with col2:
-                if st.button("❌ Remove", key=f"remove_exp_{i}"):
-                    st.session_state.experience.pop(i)
-                    st.rerun()
+        col1, col2 = st.columns([5, 1], gap="small")
+        with col2:
+            if st.button("❌", key=f"remove_exp_{i}", help="Remove this experience"):
+                st.session_state.experience.pop(i)
+                st.rerun()
 
-            company = st.text_input("Company Name", key=f"exp_company_{i}")
-            position = st.text_input("Position", key=f"exp_position_{i}")
-            start_date = st.text_input("Start Date", key=f"exp_start_{i}")
-            end_date = st.text_input("End Date", key=f"exp_end_{i}")
-            description = st.text_area("Role Overview", key=f"exp_desc_{i}")
-            responsibilities = st.text_area("Key Responsibilities (one per line)", key=f"exp_resp_{i}")
-            achievements = st.text_area("Key Achievements (one per line)", key=f"exp_ach_{i}")
+        col1, col2 = st.columns(2, gap="medium")
+        with col1:
+            st.markdown('<label class="section-label">Company Name</label>', unsafe_allow_html=True)
+            company = st.text_input("", placeholder="Tech Company Inc.", key=f"exp_company_{i}")
 
-            st.session_state.experience[i] = {
-                "company": company,
-                "position": position,
-                "start_date": start_date,
-                "end_date": end_date,
-                "description": description,
-                "responsibilities": responsibilities,
-                "achievements": achievements
-            }
+            st.markdown('<label class="section-label">Position</label>', unsafe_allow_html=True)
+            position = st.text_input("", placeholder="Senior Developer", key=f"exp_position_{i}")
+
+        with col2:
+            st.markdown('<label class="section-label">Start Date</label>', unsafe_allow_html=True)
+            start_date = st.text_input("", placeholder="Jan 2020", key=f"exp_start_{i}")
+
+            st.markdown('<label class="section-label">End Date</label>', unsafe_allow_html=True)
+            end_date = st.text_input("", placeholder="Present", key=f"exp_end_{i}")
+
+        st.markdown('<label class="section-label">Role Overview</label>', unsafe_allow_html=True)
+        description = st.text_area("", placeholder="Describe your main responsibilities...", height=80, key=f"exp_desc_{i}")
+
+        st.markdown('<label class="section-label">Key Responsibilities (one per line)</label>', unsafe_allow_html=True)
+        responsibilities = st.text_area("", placeholder="Led development of new features\nMentored junior developers\nOptimized database queries", height=80, key=f"exp_resp_{i}")
+
+        st.markdown('<label class="section-label">Key Achievements (one per line)</label>', unsafe_allow_html=True)
+        achievements = st.text_area("", placeholder="Increased app performance by 40%\nLaunched new product feature\nReduced server costs by 30%", height=80, key=f"exp_ach_{i}")
+
+        st.session_state.experience[i] = {
+            "company": company,
+            "position": position,
+            "start_date": start_date,
+            "end_date": end_date,
+            "description": description,
+            "responsibilities": responsibilities,
+            "achievements": achievements
+        }
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # PROJECTS SECTION
     # -------------------------------------------------------
-    st.header("Projects")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>🚀 Projects</h2>', unsafe_allow_html=True)
 
-    if st.button("➕ Add Project"):
+    if st.button("➕ Add Project", use_container_width=True, key="add_proj_btn"):
         st.session_state.projects.append({})
         st.rerun()
 
     for i, proj in enumerate(st.session_state.projects):
-        with st.expander(f"Project {i+1}", expanded=True):
+        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
 
-            col1, col2 = st.columns([5, 1])
-            with col2:
-                if st.button("❌ Remove", key=f"remove_proj_{i}"):
-                    st.session_state.projects.pop(i)
-                    st.rerun()
+        col1, col2 = st.columns([5, 1], gap="small")
+        with col2:
+            if st.button("❌", key=f"remove_proj_{i}", help="Remove this project"):
+                st.session_state.projects.pop(i)
+                st.rerun()
 
-            name = st.text_input("Project Name", key=f"proj_name_{i}")
-            technologies = st.text_input("Technologies Used", key=f"proj_tech_{i}")
-            description = st.text_area("Project Overview", key=f"proj_desc_{i}")
-            responsibilities = st.text_area("Key Responsibilities (one per line)", key=f"proj_resp_{i}")
-            achievements = st.text_area("Key Achievements (one per line)", key=f"proj_ach_{i}")
-            link = st.text_input("Project Link (GitHub / Live URL)", key=f"proj_link_{i}")
+        st.markdown('<label class="section-label">Project Name</label>', unsafe_allow_html=True)
+        name = st.text_input("", placeholder="E-commerce Platform", key=f"proj_name_{i}")
 
-            st.session_state.projects[i] = {
-                "name": name,
-                "technologies": technologies,
-                "description": description,
-                "responsibilities": responsibilities,
-                "achievements": achievements,
-                "link": link
-            }
+        st.markdown('<label class="section-label">Technologies Used</label>', unsafe_allow_html=True)
+        technologies = st.text_input("", placeholder="React, Node.js, MongoDB, AWS", key=f"proj_tech_{i}")
+
+        st.markdown('<label class="section-label">Project Overview</label>', unsafe_allow_html=True)
+        description = st.text_area("", placeholder="Describe what the project does...", height=80, key=f"proj_desc_{i}")
+
+        st.markdown('<label class="section-label">Key Responsibilities (one per line)</label>', unsafe_allow_html=True)
+        responsibilities = st.text_area("", placeholder="Designed system architecture\nBuilt REST API endpoints\nImplemented payment integration", height=80, key=f"proj_resp_{i}")
+
+        st.markdown('<label class="section-label">Key Achievements (one per line)</label>', unsafe_allow_html=True)
+        achievements = st.text_area("", placeholder="Served 10,000+ users\nAchieved 99.9% uptime\n50% faster checkout process", height=80, key=f"proj_ach_{i}")
+
+        st.markdown('<label class="section-label">Project Link (GitHub / Live URL)</label>', unsafe_allow_html=True)
+        link = st.text_input("", placeholder="https://github.com/yourname/project", key=f"proj_link_{i}")
+
+        st.session_state.projects[i] = {
+            "name": name,
+            "technologies": technologies,
+            "description": description,
+            "responsibilities": responsibilities,
+            "achievements": achievements,
+            "link": link
+        }
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # EDUCATION SECTION
     # -------------------------------------------------------
-    st.header("Education")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>🎓 Education</h2>', unsafe_allow_html=True)
 
-    if st.button("➕ Add Education"):
+    if st.button("➕ Add Education", use_container_width=True, key="add_edu_btn"):
         st.session_state.education.append({})
         st.rerun()
 
     for i, edu in enumerate(st.session_state.education):
-        with st.expander(f"Education {i+1}", expanded=True):
+        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
 
-            col1, col2 = st.columns([5, 1])
-            with col2:
-                if st.button("❌ Remove", key=f"remove_edu_{i}"):
-                    st.session_state.education.pop(i)
-                    st.rerun()
+        col1, col2 = st.columns([5, 1], gap="small")
+        with col2:
+            if st.button("❌", key=f"remove_edu_{i}", help="Remove this education"):
+                st.session_state.education.pop(i)
+                st.rerun()
 
-            school = st.text_input("School / University", key=f"edu_school_{i}")
-            degree = st.text_input("Degree", key=f"edu_degree_{i}")
-            field = st.text_input("Field of Study", key=f"edu_field_{i}")
-            graduation_date = st.text_input("Graduation Date", key=f"edu_grad_{i}")
-            gpa = st.text_input("GPA (Optional)", key=f"edu_gpa_{i}")
-            achievements = st.text_area("Achievements & Activities (one per line)", key=f"edu_ach_{i}")
+        col1, col2 = st.columns(2, gap="medium")
+        with col1:
+            st.markdown('<label class="section-label">School / University</label>', unsafe_allow_html=True)
+            school = st.text_input("", placeholder="University of Technology", key=f"edu_school_{i}")
 
-            st.session_state.education[i] = {
-                "school": school,
-                "degree": degree,
-                "field": field,
-                "graduation_date": graduation_date,
-                "gpa": gpa,
-                "achievements": achievements
-            }
+            st.markdown('<label class="section-label">Degree</label>', unsafe_allow_html=True)
+            degree = st.text_input("", placeholder="Bachelor of Science", key=f"edu_degree_{i}")
+
+        with col2:
+            st.markdown('<label class="section-label">Field of Study</label>', unsafe_allow_html=True)
+            field = st.text_input("", placeholder="Computer Science", key=f"edu_field_{i}")
+
+            st.markdown('<label class="section-label">Graduation Date</label>', unsafe_allow_html=True)
+            graduation_date = st.text_input("", placeholder="May 2023", key=f"edu_grad_{i}")
+
+        st.markdown('<label class="section-label">GPA (Optional)</label>', unsafe_allow_html=True)
+        gpa = st.text_input("", placeholder="3.8/4.0", key=f"edu_gpa_{i}")
+
+        st.markdown('<label class="section-label">Achievements & Activities (one per line)</label>', unsafe_allow_html=True)
+        achievements = st.text_area("", placeholder="Dean's List - all semesters\nPresident of Programming Club\nPublished research paper on AI", height=80, key=f"edu_ach_{i}")
+
+        st.session_state.education[i] = {
+            "school": school,
+            "degree": degree,
+            "field": field,
+            "graduation_date": graduation_date,
+            "gpa": gpa,
+            "achievements": achievements
+        }
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # SKILLS SECTION
     # -------------------------------------------------------
-    st.header("Skills")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>⚡ Skills</h2>', unsafe_allow_html=True)
 
-    technical_skills = st.text_area("Technical Skills (one per line)")
-    soft_skills = st.text_area("Soft Skills (one per line)")
-    languages = st.text_area("Languages (one per line)")
-    tools = st.text_area("Tools & Technologies (one per line)")
+    col1, col2 = st.columns(2, gap="medium")
+    with col1:
+        st.markdown('<label class="section-label">Technical Skills (one per line)</label>', unsafe_allow_html=True)
+        technical_skills = st.text_area("", placeholder="Python\nJavaScript\nReact\nSQL", height=100, key="tech_skills")
+
+        st.markdown('<label class="section-label">Languages (one per line)</label>', unsafe_allow_html=True)
+        languages = st.text_area("", placeholder="English (Native)\nSpanish (Fluent)\nFrench (Intermediate)", height=80, key="languages")
+
+    with col2:
+        st.markdown('<label class="section-label">Soft Skills (one per line)</label>', unsafe_allow_html=True)
+        soft_skills = st.text_area("", placeholder="Leadership\nTeam Collaboration\nCommunication\nProblem Solving", height=100, key="soft_skills")
+
+        st.markdown('<label class="section-label">Tools & Technologies (one per line)</label>', unsafe_allow_html=True)
+        tools = st.text_area("", placeholder="Git\nDocker\nJenkins\nAWS", height=80, key="tools")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # TEMPLATE SELECTION
     # -------------------------------------------------------
-    st.header("Select Resume Template")
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2>🎨 Select Resume Template</h2>', unsafe_allow_html=True)
 
-    template = st.selectbox(
-        "Choose Template",
-        ["Modern", "Professional", "Minimal", "Creative"]
-    )
+    st.markdown('<label class="section-label">Choose your preferred resume template</label>', unsafe_allow_html=True)
+    template = st.selectbox("", ["Modern", "Professional", "Minimal", "Creative"], key="template")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------
     # GENERATE RESUME
     # -------------------------------------------------------
-    st.divider()
-    if st.button("🚀 Generate Resume", use_container_width=True):
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
 
-        resume_data = {
-            "template": template,
-            "personal_info": {
-                "full_name": full_name,
-                "title": title,
-                "email": email,
-                "phone": phone,
-                "location": location,
-                "linkedin": linkedin,
-                "portfolio": portfolio
-            },
-            "summary": summary,
-            "experience": st.session_state.experience,
-            "projects": st.session_state.projects,
-            "education": st.session_state.education,
-            "skills": {
-                "technical": technical_skills,
-                "soft": soft_skills,
-                "languages": languages,
-                "tools": tools
+    col1, col2 = st.columns(2, gap="medium")
+    with col1:
+        if st.button("🚀 Generate Resume", use_container_width=True, key="generate_btn"):
+
+            resume_data = {
+                "template": template,
+                "personal_info": {
+                    "full_name": full_name,
+                    "title": title,
+                    "email": email,
+                    "phone": phone,
+                    "location": location,
+                    "linkedin": linkedin,
+                    "portfolio": portfolio
+                },
+                "summary": summary,
+                "experience": st.session_state.experience,
+                "projects": st.session_state.projects,
+                "education": st.session_state.education,
+                "skills": {
+                    "technical": technical_skills,
+                    "soft": soft_skills,
+                    "languages": languages,
+                    "tools": tools
+                }
             }
-        }
 
-        try:
-            buffer = builder.generate_resume(resume_data)
+            try:
+                buffer = builder.generate_resume(resume_data)
 
-            st.success("✅ Resume Generated Successfully!")
+                st.success("✅ Resume Generated Successfully!")
 
-            file_name = f"{full_name.strip().replace(' ', '_') or 'Resume'}_Resume.docx"
+                file_name = f"{full_name.strip().replace(' ', '_') or 'Resume'}_Resume.docx"
 
-            st.download_button(
-                label="📥 Download Resume",
-                data=buffer,
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
-            )
+                st.download_button(
+                    label="📥 Download Resume",
+                    data=buffer,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                    key="download_btn"
+                )
 
-        except Exception as e:
-            st.error(f"Error generating resume: {e}")
+            except Exception as e:
+                st.error(f"Error generating resume: {e}")
+
+    with col2:
+        if st.button("🔄 Clear Form", use_container_width=True, key="clear_btn"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------------------------------------
 # LIVE PREVIEW SECTION
 # -------------------------------------------------------
 with preview_col:
-    st.subheader("Live Preview")
+    st.markdown('<h2 style="text-align: center; color: white;">📋 Live Preview</h2>', unsafe_allow_html=True)
 
     preview_html = '<div class="preview-container">'
 
