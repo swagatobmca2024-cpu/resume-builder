@@ -1,85 +1,153 @@
 import streamlit as st
 from resume_builder import ResumeBuilder
-import datetime
 
-st.set_page_config(page_title="Resume Builder", layout="centered")
-
-st.title("📄 Resume Builder")
+st.set_page_config(page_title="Advanced Resume Builder", layout="wide")
 
 builder = ResumeBuilder()
 
-# -------------------------------
-# Personal Information
-# -------------------------------
+st.title("📄 Advanced Resume Builder")
+
+# -------------------------------------------------------
+# SESSION STATE INITIALIZATION
+# -------------------------------------------------------
+if "experience" not in st.session_state:
+    st.session_state.experience = []
+
+if "projects" not in st.session_state:
+    st.session_state.projects = []
+
+if "education" not in st.session_state:
+    st.session_state.education = []
+
+# -------------------------------------------------------
+# PERSONAL INFORMATION
+# -------------------------------------------------------
 st.header("Personal Information")
 
-full_name = st.text_input("Full Name")
+col1, col2 = st.columns(2)
+
+with col1:
+    full_name = st.text_input("Full Name")
+    email = st.text_input("Email")
+    phone = st.text_input("Phone")
+
+with col2:
+    location = st.text_input("Location")
+    linkedin = st.text_input("LinkedIn URL")
+    portfolio = st.text_input("Portfolio Website")
+
 title = st.text_input("Professional Title")
-email = st.text_input("Email")
-phone = st.text_input("Phone")
-location = st.text_input("Location")
-linkedin = st.text_input("LinkedIn URL")
-portfolio = st.text_input("Portfolio URL")
 
-# -------------------------------
-# Professional Summary
-# -------------------------------
+# -------------------------------------------------------
+# PROFESSIONAL SUMMARY
+# -------------------------------------------------------
 st.header("Professional Summary")
-summary = st.text_area("Write your summary")
+summary = st.text_area("Write your professional summary", height=150)
 
-# -------------------------------
-# Experience Section
-# -------------------------------
-st.header("Experience")
+# -------------------------------------------------------
+# EXPERIENCE SECTION
+# -------------------------------------------------------
+st.header("Work Experience")
 
-experience_list = []
-num_exp = st.number_input("Number of Experiences", min_value=0, max_value=5, step=1)
+if st.button("➕ Add Experience"):
+    st.session_state.experience.append({})
 
-for i in range(num_exp):
-    st.subheader(f"Experience {i+1}")
-    position = st.text_input(f"Position {i}", key=f"pos_{i}")
-    company = st.text_input(f"Company {i}", key=f"comp_{i}")
-    start_date = st.text_input(f"Start Date {i}", key=f"start_{i}")
-    end_date = st.text_input(f"End Date {i}", key=f"end_{i}")
-    description = st.text_area(f"Description {i}", key=f"desc_{i}")
-    responsibilities = st.text_area(f"Responsibilities (one per line) {i}", key=f"resp_{i}")
+for i, exp in enumerate(st.session_state.experience):
+    with st.expander(f"Experience {i+1}", expanded=True):
 
-    experience_list.append({
-        "position": position,
-        "company": company,
-        "start_date": start_date,
-        "end_date": end_date,
-        "description": description,
-        "responsibilities": responsibilities
-    })
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("❌ Remove", key=f"remove_exp_{i}"):
+                st.session_state.experience.pop(i)
+                st.rerun()
 
-# -------------------------------
-# Education Section
-# -------------------------------
+        company = st.text_input("Company Name", key=f"exp_company_{i}")
+        position = st.text_input("Position", key=f"exp_position_{i}")
+        start_date = st.text_input("Start Date", key=f"exp_start_{i}")
+        end_date = st.text_input("End Date", key=f"exp_end_{i}")
+        description = st.text_area("Role Overview", key=f"exp_desc_{i}")
+        responsibilities = st.text_area("Key Responsibilities (one per line)", key=f"exp_resp_{i}")
+        achievements = st.text_area("Key Achievements (one per line)", key=f"exp_ach_{i}")
+
+        st.session_state.experience[i] = {
+            "company": company,
+            "position": position,
+            "start_date": start_date,
+            "end_date": end_date,
+            "description": description,
+            "responsibilities": responsibilities,
+            "achievements": achievements
+        }
+
+# -------------------------------------------------------
+# PROJECTS SECTION
+# -------------------------------------------------------
+st.header("Projects")
+
+if st.button("➕ Add Project"):
+    st.session_state.projects.append({})
+
+for i, proj in enumerate(st.session_state.projects):
+    with st.expander(f"Project {i+1}", expanded=True):
+
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("❌ Remove", key=f"remove_proj_{i}"):
+                st.session_state.projects.pop(i)
+                st.rerun()
+
+        name = st.text_input("Project Name", key=f"proj_name_{i}")
+        technologies = st.text_input("Technologies Used", key=f"proj_tech_{i}")
+        description = st.text_area("Project Overview", key=f"proj_desc_{i}")
+        responsibilities = st.text_area("Key Responsibilities (one per line)", key=f"proj_resp_{i}")
+        achievements = st.text_area("Key Achievements (one per line)", key=f"proj_ach_{i}")
+        link = st.text_input("Project Link (GitHub / Live URL)", key=f"proj_link_{i}")
+
+        st.session_state.projects[i] = {
+            "name": name,
+            "technologies": technologies,
+            "description": description,
+            "responsibilities": responsibilities,
+            "achievements": achievements,
+            "link": link
+        }
+
+# -------------------------------------------------------
+# EDUCATION SECTION
+# -------------------------------------------------------
 st.header("Education")
 
-education_list = []
-num_edu = st.number_input("Number of Education Entries", min_value=0, max_value=5, step=1)
+if st.button("➕ Add Education"):
+    st.session_state.education.append({})
 
-for i in range(num_edu):
-    st.subheader(f"Education {i+1}")
-    school = st.text_input(f"School {i}", key=f"school_{i}")
-    degree = st.text_input(f"Degree {i}", key=f"degree_{i}")
-    field = st.text_input(f"Field of Study {i}", key=f"field_{i}")
-    graduation_date = st.text_input(f"Graduation Date {i}", key=f"grad_{i}")
-    gpa = st.text_input(f"GPA {i}", key=f"gpa_{i}")
+for i, edu in enumerate(st.session_state.education):
+    with st.expander(f"Education {i+1}", expanded=True):
 
-    education_list.append({
-        "school": school,
-        "degree": degree,
-        "field": field,
-        "graduation_date": graduation_date,
-        "gpa": gpa
-    })
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("❌ Remove", key=f"remove_edu_{i}"):
+                st.session_state.education.pop(i)
+                st.rerun()
 
-# -------------------------------
-# Skills Section
-# -------------------------------
+        school = st.text_input("School / University", key=f"edu_school_{i}")
+        degree = st.text_input("Degree", key=f"edu_degree_{i}")
+        field = st.text_input("Field of Study", key=f"edu_field_{i}")
+        graduation_date = st.text_input("Graduation Date", key=f"edu_grad_{i}")
+        gpa = st.text_input("GPA (Optional)", key=f"edu_gpa_{i}")
+        achievements = st.text_area("Achievements & Activities (one per line)", key=f"edu_ach_{i}")
+
+        st.session_state.education[i] = {
+            "school": school,
+            "degree": degree,
+            "field": field,
+            "graduation_date": graduation_date,
+            "gpa": gpa,
+            "achievements": achievements
+        }
+
+# -------------------------------------------------------
+# SKILLS SECTION
+# -------------------------------------------------------
 st.header("Skills")
 
 technical_skills = st.text_area("Technical Skills (one per line)")
@@ -87,20 +155,20 @@ soft_skills = st.text_area("Soft Skills (one per line)")
 languages = st.text_area("Languages (one per line)")
 tools = st.text_area("Tools & Technologies (one per line)")
 
-# -------------------------------
-# Template Selection
-# -------------------------------
-st.header("Select Template")
+# -------------------------------------------------------
+# TEMPLATE SELECTION
+# -------------------------------------------------------
+st.header("Select Resume Template")
 
 template = st.selectbox(
-    "Choose Resume Template",
+    "Choose Template",
     ["Modern", "Professional", "Minimal", "Creative"]
 )
 
-# -------------------------------
-# Generate Resume
-# -------------------------------
-if st.button("Generate Resume"):
+# -------------------------------------------------------
+# GENERATE RESUME
+# -------------------------------------------------------
+if st.button("🚀 Generate Resume", use_container_width=True):
 
     resume_data = {
         "template": template,
@@ -114,8 +182,9 @@ if st.button("Generate Resume"):
             "portfolio": portfolio
         },
         "summary": summary,
-        "experience": experience_list,
-        "education": education_list,
+        "experience": st.session_state.experience,
+        "projects": st.session_state.projects,
+        "education": st.session_state.education,
         "skills": {
             "technical": technical_skills,
             "soft": soft_skills,
@@ -129,11 +198,14 @@ if st.button("Generate Resume"):
 
         st.success("✅ Resume Generated Successfully!")
 
+        file_name = f"{full_name.strip().replace(' ', '_') or 'Resume'}_Resume.docx"
+
         st.download_button(
             label="📥 Download Resume",
             data=buffer,
-            file_name=f"{full_name.replace(' ', '_')}_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
         )
 
     except Exception as e:
