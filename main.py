@@ -1,4 +1,179 @@
 import streamlit as st
+import random
+import json
+import pdfplumber
+from docx import Document
+from groq import Groq
+
+# =========================================
+# PAGE CONFIG
+# =========================================
+st.set_page_config(page_title="Resume Parser & Builder", layout="wide")
+
+# =========================================
+# GROQ + LLAMA 3.3-70B (MULTI KEY)
+# =========================================
+def get_groq_client():
+    api_keys = st.secrets["GROQ_API_KEYS"]
+    api_key = random.choice(api_keys)
+    return Groq(api_key=api_key)
+
+# =========================================
+# RESUME TEXT EXTRACTION (PDF / DOCX)
+# =========================================
+def extract_resume_text(uploaded_file):
+    if uploaded_file.name.lower().endswith(".pdf"):
+        text = ""
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                if page.extract_text():
+                    text += page.extract_text() + "\n"
+        return text
+
+    elif uploaded_file.name.lower().endswith(".docx"):
+        doc = Document(uploaded_file)
+        return "\n".join(p.text for p in doc.paragraphs)
+
+    else:
+        raise ValueError("Unsupported file format")
+
+# =========================================
+# RESUME PARSER (ANY FORMAT → STRUCTURED JSON)
+# =========================================
+def parse_resume_llama(resume_text):
+    client = get_groq_client()
+
+    prompt = f"""
+You are an ATS-grade resume parser.
+
+RULES:
+- Return ONLY valid JSON
+- No markdown
+- No explanations
+- If a field is missing, use empty string or empty array
+
+JSON FORMAT:
+{{
+  "personal_info": {{
+    "full_name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "linkedin": "",
+    "portfolio": "",
+    "title": ""
+  }},
+  "summary": "",
+  "skills": {{
+    "technical": [],
+    "soft": [],
+    "languages": [],
+    "tools": []
+  }},
+  "experience": [
+    {{
+      "company": "",
+      "position": "",
+      "start_date": "",
+      "end_date": "",
+      "description": ""
+    }}
+  ],
+  "education": [
+    {{
+      "school": "",
+      "degree": "",
+      "field": "",
+      "graduation_date": "",
+      "gpa": ""
+    }}
+  ]
+}}
+
+RESUME TEXT:
+\"\"\"{resume_text}\"\"\"
+"""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return json.loads(response.choices[0].message.content)
+
+# =========================================
+# SESSION STATE INITIALIZATION
+# =========================================
+defaults = {
+    "full_name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "linkedin": "",
+    "portfolio": "",
+    "title": "",
+    "summary": "",
+    "tech_skills": "",
+    "soft_skills": "",
+    "languages": "",
+    "tools": "",
+    "experience": [],
+    "education": []
+}
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# =========================================
+# RESUME UPLOAD + PARSE UI
+# =========================================
+st.markdown("## 📄 Upload Resume (PDF / DOCX)")
+
+uploaded_resume = st.file_uploader(
+    "Upload your resume",
+    type=["pdf", "docx"]
+)
+
+if uploaded_resume:
+    if st.button("⚡ Parse Resume & Autofill", use_container_width=True):
+        with st.spinner("Parsing resume using LLaMA-3.3-70B..."):
+            try:
+                resume_text = extract_resume_text(uploaded_resume)
+                parsed = parse_resume_llama(resume_text)
+
+                # Autofill session state
+                pi = parsed["personal_info"]
+                st.session_state.full_name = pi["full_name"]
+                st.session_state.email = pi["email"]
+                st.session_state.phone = pi["phone"]
+                st.session_state.location = pi["location"]
+                st.session_state.linkedin = pi["linkedin"]
+                st.session_state.portfolio = pi["portfolio"]
+                st.session_state.title = pi["title"]
+                st.session_state.summary = parsed["summary"]
+
+                skills = parsed["skills"]
+                st.session_state.tech_skills = "\n".join(skills["technical"])
+                st.session_state.soft_skills = "\n".join(skills["soft"])
+                st.session_state.languages = "\n".join(skills["languages"])
+                st.session_state.tools = "\n".join(skills["tools"])
+
+                st.session_state.experience = parsed["experience"]
+                st.session_state.education = parsed["education"]
+
+                st.success("Resume parsed and form auto-filled!")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Parsing failed: {e}")
+
+# =========================================
+# RESUME BUILDER FORM
+# =========================================
+
+import streamlit as st
 from resume_builder import ResumeBuilder
 
 st.set_page_config(page_title="Advanced Resume Builder", layout="wide")
