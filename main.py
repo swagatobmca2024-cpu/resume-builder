@@ -1,6 +1,7 @@
 import streamlit as st
 import random
 import json
+import re
 import pdfplumber
 from docx import Document
 from groq import Groq
@@ -11,7 +12,7 @@ from groq import Groq
 st.set_page_config(page_title="Resume Parser & Builder", layout="wide")
 
 # =========================================
-# GROQ + LLAMA 3.3-70B (MULTI KEY)
+# GROQ CLIENT (MULTI-KEY SUPPORT)
 # =========================================
 def get_groq_client():
     api_keys = st.secrets["GROQ_API_KEYS"]
@@ -19,40 +20,76 @@ def get_groq_client():
     return Groq(api_key=api_key)
 
 # =========================================
-# RESUME TEXT EXTRACTION (PDF / DOCX)
+# CLEAN TEXT FUNCTION
+# =========================================
+def clean_text(text):
+    text = text.replace("\t", " ")
+    text = re.sub(r'\n+', '\n', text)
+    text = re.sub(r'[ ]{2,}', ' ', text)
+    return text.strip()
+
+# =========================================
+# RESUME TEXT EXTRACTION (ROBUST)
 # =========================================
 def extract_resume_text(uploaded_file):
-    if uploaded_file.name.lower().endswith(".pdf"):
+    file_name = uploaded_file.name.lower()
+
+    # ---------- PDF ----------
+    if file_name.endswith(".pdf"):
         text = ""
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
-                if page.extract_text():
-                    text += page.extract_text() + "\n"
-        return text
+                page_text = page.extract_text(x_tolerance=2, y_tolerance=2)
+                if page_text:
+                    text += page_text + "\n"
+        return clean_text(text)
 
-    elif uploaded_file.name.lower().endswith(".docx"):
+    # ---------- DOCX ----------
+    elif file_name.endswith(".docx"):
         doc = Document(uploaded_file)
-        return "\n".join(p.text for p in doc.paragraphs)
+        text = "\n".join(p.text for p in doc.paragraphs)
+        return clean_text(text)
+
+    # ---------- TXT ----------
+    elif file_name.endswith(".txt"):
+        text = uploaded_file.read().decode("utf-8")
+        return clean_text(text)
 
     else:
         raise ValueError("Unsupported file format")
 
 # =========================================
-# RESUME PARSER (ANY FORMAT → STRUCTURED JSON)
+# SAFE JSON LOADER (CRITICAL FIX)
+# =========================================
+def safe_json_load(response_text):
+    try:
+        return json.loads(response_text)
+    except:
+        cleaned = response_text.strip()
+        cleaned = cleaned.replace("```json", "")
+        cleaned = cleaned.replace("```", "")
+        return json.loads(cleaned)
+
+# =========================================
+# RESUME PARSER (FORMAT AGNOSTIC)
 # =========================================
 def parse_resume_llama(resume_text):
     client = get_groq_client()
 
     prompt = f"""
-You are an ATS-grade resume parser.
+You are an enterprise ATS resume parser.
 
-RULES:
+STRICT RULES:
 - Return ONLY valid JSON
 - No markdown
 - No explanations
-- If a field is missing, use empty string or empty array
+- Do NOT wrap in ``` blocks
+- Follow schema exactly
+- If missing data, use empty string or empty array
+- Merge multi-column resumes logically
+- Ignore design elements, icons, or graphics
 
-JSON FORMAT:
+JSON SCHEMA:
 {{
   "personal_info": {{
     "full_name": "",
@@ -100,7 +137,7 @@ RESUME TEXT:
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return json.loads(response.choices[0].message.content)
+    return safe_json_load(response.choices[0].message.content)
 
 # =========================================
 # SESSION STATE INITIALIZATION
@@ -127,13 +164,13 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # =========================================
-# RESUME UPLOAD + PARSE UI
+# UI
 # =========================================
-st.markdown("## 📄 Upload Resume (PDF / DOCX)")
+st.markdown("## 📄 Upload Resume (PDF / DOCX / TXT)")
 
 uploaded_resume = st.file_uploader(
     "Upload your resume",
-    type=["pdf", "docx"]
+    type=["pdf", "docx", "txt"]
 )
 
 if uploaded_resume:
@@ -141,29 +178,35 @@ if uploaded_resume:
         with st.spinner("Parsing resume using LLaMA-3.3-70B..."):
             try:
                 resume_text = extract_resume_text(uploaded_resume)
+
+                if len(resume_text) < 50:
+                    st.error("Resume text extraction failed. File may be image-based.")
+                    st.stop()
+
                 parsed = parse_resume_llama(resume_text)
 
                 # Autofill session state
-                pi = parsed["personal_info"]
-                st.session_state.full_name = pi["full_name"]
-                st.session_state.email = pi["email"]
-                st.session_state.phone = pi["phone"]
-                st.session_state.location = pi["location"]
-                st.session_state.linkedin = pi["linkedin"]
-                st.session_state.portfolio = pi["portfolio"]
-                st.session_state.title = pi["title"]
-                st.session_state.summary = parsed["summary"]
+                pi = parsed.get("personal_info", {})
 
-                skills = parsed["skills"]
-                st.session_state.tech_skills = "\n".join(skills["technical"])
-                st.session_state.soft_skills = "\n".join(skills["soft"])
-                st.session_state.languages = "\n".join(skills["languages"])
-                st.session_state.tools = "\n".join(skills["tools"])
+                st.session_state.full_name = pi.get("full_name", "")
+                st.session_state.email = pi.get("email", "")
+                st.session_state.phone = pi.get("phone", "")
+                st.session_state.location = pi.get("location", "")
+                st.session_state.linkedin = pi.get("linkedin", "")
+                st.session_state.portfolio = pi.get("portfolio", "")
+                st.session_state.title = pi.get("title", "")
+                st.session_state.summary = parsed.get("summary", "")
 
-                st.session_state.experience = parsed["experience"]
-                st.session_state.education = parsed["education"]
+                skills = parsed.get("skills", {})
+                st.session_state.tech_skills = "\n".join(skills.get("technical", []))
+                st.session_state.soft_skills = "\n".join(skills.get("soft", []))
+                st.session_state.languages = "\n".join(skills.get("languages", []))
+                st.session_state.tools = "\n".join(skills.get("tools", []))
 
-                st.success("Resume parsed and form auto-filled!")
+                st.session_state.experience = parsed.get("experience", [])
+                st.session_state.education = parsed.get("education", [])
+
+                st.success("✅ Resume parsed successfully and form auto-filled!")
                 st.rerun()
 
             except Exception as e:
