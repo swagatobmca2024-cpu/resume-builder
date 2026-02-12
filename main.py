@@ -1,11 +1,16 @@
 import streamlit as st
 from resume_builder import ResumeBuilder
+import pdfplumber
+from docx import Document as DocxDocument
+from groq import Groq
+import json
+import random
+import re
 
 st.set_page_config(page_title="Advanced Resume Builder", layout="wide")
 
 builder = ResumeBuilder()
 
-# Dark Theme with Blue Glassmorphism CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -46,7 +51,6 @@ st.markdown("""
         background: transparent;
     }
 
-    /* Glassmorphism Container */
     .glass-container {
         background: rgba(30, 41, 59, 0.4);
         backdrop-filter: blur(20px);
@@ -88,7 +92,6 @@ st.markdown("""
         transform: translateY(-2px);
     }
 
-    /* Headings */
     h1 {
         color: #ffffff;
         text-align: center;
@@ -130,7 +133,6 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* Section Label */
     .section-label {
         color: #e2e8f0;
         font-weight: 500;
@@ -143,7 +145,6 @@ st.markdown("""
         opacity: 0.9;
     }
 
-    /* Streamlit Input Override */
     input, textarea, select {
         background: rgba(51, 65, 85, 0.5) !important;
         backdrop-filter: blur(8px) !important;
@@ -176,13 +177,11 @@ st.markdown("""
         outline: none !important;
     }
 
-    /* Textarea specific */
     textarea {
         line-height: 1.6 !important;
         resize: vertical !important;
     }
 
-    /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
         color: white !important;
@@ -216,7 +215,6 @@ st.markdown("""
             inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
     }
 
-    /* Remove Button (Red variant) */
     .stButton > button[kind="secondary"] {
         background: rgba(239, 68, 68, 0.2) !important;
         border-color: rgba(239, 68, 68, 0.3) !important;
@@ -227,7 +225,6 @@ st.markdown("""
         border-color: rgba(239, 68, 68, 0.5) !important;
     }
 
-    /* Download Button */
     .stDownloadButton > button {
         background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
         border-color: rgba(16, 185, 129, 0.3) !important;
@@ -240,7 +237,6 @@ st.markdown("""
             inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
     }
 
-    /* Expander */
     [data-testid="stExpander"] {
         background: rgba(51, 65, 85, 0.3) !important;
         border: 1px solid rgba(148, 163, 184, 0.15) !important;
@@ -253,7 +249,6 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
-    /* Selectbox */
     [data-baseweb="select"] {
         background: rgba(51, 65, 85, 0.5) !important;
         border-radius: 12px !important;
@@ -268,7 +263,6 @@ st.markdown("""
         border-color: rgba(59, 130, 246, 0.4) !important;
     }
 
-    /* Dropdown menu */
     [data-baseweb="popover"] {
         background: rgba(30, 41, 59, 0.95) !important;
         backdrop-filter: blur(20px) !important;
@@ -285,7 +279,6 @@ st.markdown("""
         background: rgba(59, 130, 246, 0.2) !important;
     }
 
-    /* Success/Error Messages */
     .stSuccess {
         background: rgba(16, 185, 129, 0.15) !important;
         border: 1px solid rgba(16, 185, 129, 0.3) !important;
@@ -302,7 +295,6 @@ st.markdown("""
         backdrop-filter: blur(12px) !important;
     }
 
-    /* Divider */
     hr {
         border: none;
         height: 1px;
@@ -313,7 +305,6 @@ st.markdown("""
         margin: 32px 0 !important;
     }
 
-    /* Preview Container */
     .preview-container {
         background: rgba(255, 255, 255, 0.98);
         backdrop-filter: blur(10px);
@@ -449,18 +440,15 @@ st.markdown("""
         transition: all 0.2s ease;
     }
 
-    /* Column gaps */
     [data-testid="column"] {
         padding: 0 8px;
     }
 
-    /* Remove default streamlit padding */
     .block-container {
         padding-top: 3rem !important;
         padding-bottom: 3rem !important;
     }
 
-    /* Scrollbar styling */
     ::-webkit-scrollbar {
         width: 10px;
         height: 10px;
@@ -481,7 +469,6 @@ st.markdown("""
         background: rgba(59, 130, 246, 0.7);
     }
 
-    /* Responsive */
     @media (max-width: 1024px) {
         h1 {
             font-size: 2.5rem;
@@ -518,7 +505,6 @@ st.markdown("""
         }
     }
 
-    /* Loading animation */
     @keyframes pulse {
         0%, 100% {
             opacity: 1;
@@ -528,7 +514,6 @@ st.markdown("""
         }
     }
 
-    /* Subtle animations */
     .glass-container, .glass-box {
         animation: fadeIn 0.5s ease-in-out;
     }
@@ -546,9 +531,184 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------------------------------------------
-# SESSION STATE INITIALIZATION
-# -------------------------------------------------------
+
+def extract_pdf_text(file):
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    return text.strip()
+
+
+def extract_docx_text(file):
+    doc = DocxDocument(file)
+    text = ""
+    for paragraph in doc.paragraphs:
+        text += paragraph.text + "\n"
+    return text.strip()
+
+
+def get_groq_client():
+    api_keys = st.secrets.get("GROQ_API_KEYS", [])
+    if not api_keys:
+        raise ValueError("No Groq API keys found in secrets")
+    selected_key = random.choice(api_keys)
+    return Groq(api_key=selected_key)
+
+
+def parse_resume_with_llama(resume_text):
+    prompt = f"""You are an ATS-grade resume parsing engine.
+
+Extract structured resume information from the text below.
+
+RULES:
+- Output ONLY valid JSON
+- No explanations, markdown, or comments
+- Missing fields must be empty strings
+- Preserve original wording
+- Detect multiple experience, project, and education entries
+
+JSON FORMAT:
+{{
+  "personal_info": {{
+    "full_name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "linkedin": "",
+    "portfolio": ""
+  }},
+  "summary": "",
+  "experience": [
+    {{
+      "company": "",
+      "position": "",
+      "start_date": "",
+      "end_date": "",
+      "description": "",
+      "responsibilities": "",
+      "achievements": ""
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "",
+      "technologies": "",
+      "description": "",
+      "responsibilities": "",
+      "achievements": "",
+      "link": ""
+    }}
+  ],
+  "education": [
+    {{
+      "school": "",
+      "degree": "",
+      "field": "",
+      "graduation_date": "",
+      "gpa": "",
+      "achievements": ""
+    }}
+  ],
+  "skills": {{
+    "technical": "",
+    "soft": "",
+    "languages": "",
+    "tools": ""
+  }}
+}}
+
+RESUME TEXT:
+\"\"\"{resume_text}\"\"\""""
+
+    client = get_groq_client()
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+    )
+
+    response_text = chat_completion.choices[0].message.content
+
+    json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+    if json_match:
+        json_str = json_match.group()
+        return json.loads(json_str)
+    else:
+        return json.loads(response_text)
+
+
+def autofill_form(parsed_data):
+    personal_info = parsed_data.get("personal_info", {})
+    st.session_state["full_name"] = personal_info.get("full_name", "")
+    st.session_state["email"] = personal_info.get("email", "")
+    st.session_state["phone"] = personal_info.get("phone", "")
+    st.session_state["location"] = personal_info.get("location", "")
+    st.session_state["linkedin"] = personal_info.get("linkedin", "")
+    st.session_state["portfolio"] = personal_info.get("portfolio", "")
+    st.session_state["title"] = personal_info.get("title", "")
+
+    st.session_state["summary"] = parsed_data.get("summary", "")
+
+    experience_list = parsed_data.get("experience", [])
+    st.session_state.experience = []
+    for i, exp in enumerate(experience_list):
+        st.session_state[f"exp_company_{i}"] = exp.get("company", "")
+        st.session_state[f"exp_position_{i}"] = exp.get("position", "")
+        st.session_state[f"exp_start_{i}"] = exp.get("start_date", "")
+        st.session_state[f"exp_end_{i}"] = exp.get("end_date", "")
+        st.session_state[f"exp_desc_{i}"] = exp.get("description", "")
+        st.session_state[f"exp_resp_{i}"] = exp.get("responsibilities", "")
+        st.session_state[f"exp_ach_{i}"] = exp.get("achievements", "")
+        st.session_state.experience.append(exp)
+
+    projects_list = parsed_data.get("projects", [])
+    st.session_state.projects = []
+    for i, proj in enumerate(projects_list):
+        st.session_state[f"proj_name_{i}"] = proj.get("name", "")
+        st.session_state[f"proj_tech_{i}"] = proj.get("technologies", "")
+        st.session_state[f"proj_desc_{i}"] = proj.get("description", "")
+        st.session_state[f"proj_resp_{i}"] = proj.get("responsibilities", "")
+        st.session_state[f"proj_ach_{i}"] = proj.get("achievements", "")
+        st.session_state[f"proj_link_{i}"] = proj.get("link", "")
+        st.session_state.projects.append(proj)
+
+    education_list = parsed_data.get("education", [])
+    st.session_state.education = []
+    for i, edu in enumerate(education_list):
+        st.session_state[f"edu_school_{i}"] = edu.get("school", "")
+        st.session_state[f"edu_degree_{i}"] = edu.get("degree", "")
+        st.session_state[f"edu_field_{i}"] = edu.get("field", "")
+        st.session_state[f"edu_grad_{i}"] = edu.get("graduation_date", "")
+        st.session_state[f"edu_gpa_{i}"] = edu.get("gpa", "")
+        st.session_state[f"edu_ach_{i}"] = edu.get("achievements", "")
+        st.session_state.education.append(edu)
+
+    skills = parsed_data.get("skills", {})
+    st.session_state["tech_skills"] = skills.get("technical", "")
+    st.session_state["soft_skills"] = skills.get("soft", "")
+    st.session_state["languages"] = skills.get("languages", "")
+    st.session_state["tools"] = skills.get("tools", "")
+
+
+def clear_all_state():
+    keys_to_delete = list(st.session_state.keys())
+    for key in keys_to_delete:
+        del st.session_state[key]
+
+    st.session_state.experience = []
+    st.session_state.projects = []
+    st.session_state.education = []
+
+
 if "experience" not in st.session_state:
     st.session_state.experience = []
 
@@ -558,17 +718,40 @@ if "projects" not in st.session_state:
 if "education" not in st.session_state:
     st.session_state.education = []
 
-# Main Title
 st.markdown('<h1>Resume Builder Pro</h1>', unsafe_allow_html=True)
 st.markdown('<p class="tagline">Create your professional resume with live preview</p>', unsafe_allow_html=True)
 
-# Create two main columns: Form (left) and Preview (right)
 form_col, preview_col = st.columns([3, 2], gap="large")
 
 with form_col:
-    # -------------------------------------------------------
-    # PERSONAL INFORMATION SECTION
-    # -------------------------------------------------------
+    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
+    st.markdown('<h2><span>📄</span> Upload Existing Resume</h2>', unsafe_allow_html=True)
+
+    st.markdown('<label class="section-label">Upload Existing Resume (PDF or DOCX)</label>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("", type=["pdf", "docx"], key="resume_upload", label_visibility="collapsed")
+
+    if uploaded_file is not None:
+        with st.spinner("Parsing your resume..."):
+            try:
+                if uploaded_file.type == "application/pdf":
+                    resume_text = extract_pdf_text(uploaded_file)
+                elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    resume_text = extract_docx_text(uploaded_file)
+                else:
+                    st.error("Unsupported file format")
+                    resume_text = None
+
+                if resume_text:
+                    parsed_data = parse_resume_with_llama(resume_text)
+                    autofill_form(parsed_data)
+                    st.success("Resume parsed successfully! Form has been auto-filled.")
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"Error parsing resume: {str(e)}")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>👤</span> Personal Information</h2>', unsafe_allow_html=True)
 
@@ -599,9 +782,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # PROFESSIONAL SUMMARY SECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>✨</span> Professional Summary</h2>', unsafe_allow_html=True)
 
@@ -610,9 +790,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # EXPERIENCE SECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>💼</span> Work Experience</h2>', unsafe_allow_html=True)
 
@@ -667,9 +844,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # PROJECTS SECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>🚀</span> Projects</h2>', unsafe_allow_html=True)
 
@@ -717,9 +891,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # EDUCATION SECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>🎓</span> Education</h2>', unsafe_allow_html=True)
 
@@ -770,9 +941,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # SKILLS SECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>⚡</span> Skills</h2>', unsafe_allow_html=True)
 
@@ -793,9 +961,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # TEMPLATE SELECTION
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
     st.markdown('<h2><span>🎨</span> Select Resume Template</h2>', unsafe_allow_html=True)
 
@@ -804,9 +969,6 @@ with form_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------
-    # GENERATE RESUME
-    # -------------------------------------------------------
     st.markdown('<div class="glass-container">', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2, gap="medium")
@@ -857,21 +1019,16 @@ with form_col:
 
     with col2:
         if st.button("Clear Form", use_container_width=True, key="clear_btn"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+            clear_all_state()
             st.rerun()
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# -------------------------------------------------------
-# LIVE PREVIEW SECTION
-# -------------------------------------------------------
 with preview_col:
     st.markdown('<h2 style="text-align: center; color: white; margin-bottom: 24px;">📋 Live Preview</h2>', unsafe_allow_html=True)
 
     preview_html = '<div class="preview-container">'
 
-    # Header Section
     preview_html += '<div class="preview-header">'
     if full_name:
         preview_html += f'<div class="preview-name">{full_name}</div>'
@@ -900,14 +1057,12 @@ with preview_col:
 
     preview_html += '</div></div>'
 
-    # Professional Summary
     if summary:
         preview_html += '<div class="preview-section">'
         preview_html += '<div class="preview-section-title">Professional Summary</div>'
         preview_html += f'<div class="preview-text">{summary}</div>'
         preview_html += '</div>'
 
-    # Work Experience
     if st.session_state.experience:
         has_content = any(exp.get("company") or exp.get("position") for exp in st.session_state.experience)
         if has_content:
@@ -955,7 +1110,6 @@ with preview_col:
 
             preview_html += '</div>'
 
-    # Projects
     if st.session_state.projects:
         has_content = any(proj.get("name") for proj in st.session_state.projects)
         if has_content:
@@ -997,7 +1151,6 @@ with preview_col:
 
             preview_html += '</div>'
 
-    # Education
     if st.session_state.education:
         has_content = any(edu.get("school") or edu.get("degree") for edu in st.session_state.education)
         if has_content:
@@ -1039,7 +1192,6 @@ with preview_col:
 
             preview_html += '</div>'
 
-    # Skills
     has_skills = technical_skills or soft_skills or languages or tools
     if has_skills:
         preview_html += '<div class="preview-section">'
@@ -1089,5 +1241,4 @@ with preview_col:
 
     preview_html += '</div>'
 
-    # Display the preview
     st.markdown(preview_html, unsafe_allow_html=True)
