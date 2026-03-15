@@ -1,1311 +1,1453 @@
+import os
+os.environ["STREAMLIT_WATCHDOG"] = "false"
+
 import streamlit as st
-import random
-import json
-import re
-import pdfplumber
-from docx import Document
-from groq import Groq
+import streamlit.components.v1 as components
 
-# =========================================
-# PAGE CONFIG
-# =========================================
-st.set_page_config(page_title="Resume Parser & Builder", layout="wide")
-
-# =========================================
-# GROQ CLIENT (MULTI-KEY SUPPORT)
-# =========================================
-def get_groq_client():
-    api_keys = st.secrets["GROQ_API_KEYS"]
-    api_key = random.choice(api_keys)
-    return Groq(api_key=api_key)
-
-# =========================================
-# CLEAN TEXT FUNCTION
-# =========================================
-def clean_text(text):
-    text = text.replace("\t", " ")
-    text = re.sub(r'\n+', '\n', text)
-    text = re.sub(r'[ ]{2,}', ' ', text)
-    return text.strip()
-
-# =========================================
-# RESUME TEXT EXTRACTION (ROBUST)
-# =========================================
-def extract_resume_text(uploaded_file):
-    file_name = uploaded_file.name.lower()
-
-    # ---------- PDF ----------
-    if file_name.endswith(".pdf"):
-        text = ""
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text(x_tolerance=2, y_tolerance=2)
-                if page_text:
-                    text += page_text + "\n"
-        return clean_text(text)
-
-    # ---------- DOCX ----------
-    elif file_name.endswith(".docx"):
-        doc = Document(uploaded_file)
-        text = "\n".join(p.text for p in doc.paragraphs)
-        return clean_text(text)
-
-    # ---------- TXT ----------
-    elif file_name.endswith(".txt"):
-        text = uploaded_file.read().decode("utf-8")
-        return clean_text(text)
-
-    else:
-        raise ValueError("Unsupported file format")
-
-# =========================================
-# SAFE JSON LOADER (CRITICAL FIX)
-# =========================================
-def safe_json_load(response_text):
-    try:
-        return json.loads(response_text)
-    except:
-        cleaned = response_text.strip()
-        cleaned = cleaned.replace("```json", "")
-        cleaned = cleaned.replace("```", "")
-        return json.loads(cleaned)
-
-# =========================================
-# RESUME PARSER (FORMAT AGNOSTIC)
-# =========================================
-def parse_resume_llama(resume_text):
-    client = get_groq_client()
-
-    prompt = f"""
-You are an enterprise ATS resume parser.
-
-STRICT RULES:
-- Return ONLY valid JSON
-- No markdown
-- No explanations
-- Do NOT wrap in ``` blocks
-- Follow schema exactly
-- If missing data, use empty string or empty array
-- Merge multi-column resumes logically
-- Ignore design elements, icons, or graphics
-
-JSON SCHEMA:
-{{
-  "personal_info": {{
-    "full_name": "",
-    "email": "",
-    "phone": "",
-    "location": "",
-    "linkedin": "",
-    "portfolio": "",
-    "title": ""
-  }},
-  "summary": "",
-  "skills": {{
-    "technical": [],
-    "soft": [],
-    "languages": [],
-    "tools": []
-  }},
-  "experience": [
-    {{
-      "company": "",
-      "position": "",
-      "start_date": "",
-      "end_date": "",
-      "description": ""
-    }}
-  ],
-  "education": [
-    {{
-      "school": "",
-      "degree": "",
-      "field": "",
-      "graduation_date": "",
-      "gpa": ""
-    }}
-  ]
-}}
-
-RESUME TEXT:
-\"\"\"{resume_text}\"\"\"
-"""
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return safe_json_load(response.choices[0].message.content)
-
-# =========================================
-# SESSION STATE INITIALIZATION
-# =========================================
-defaults = {
-    "full_name": "",
-    "email": "",
-    "phone": "",
-    "location": "",
-    "linkedin": "",
-    "portfolio": "",
-    "title": "",
-    "summary": "",
-    "tech_skills": "",
-    "soft_skills": "",
-    "languages": "",
-    "tools": "",
-    "experience": [],
-    "education": []
-}
-
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# =========================================
-# UI
-# =========================================
-st.markdown("## 📄 Upload Resume (PDF / DOCX / TXT)")
-
-uploaded_resume = st.file_uploader(
-    "Upload your resume",
-    type=["pdf", "docx", "txt"]
+st.set_page_config(
+    page_title="HireLyzer — AI Resume Intelligence",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-if uploaded_resume:
-    if st.button("⚡ Parse Resume & Autofill", use_container_width=True):
-        with st.spinner("Parsing resume using LLaMA-3.3-70B..."):
-            try:
-                resume_text = extract_resume_text(uploaded_resume)
-
-                if len(resume_text) < 50:
-                    st.error("Resume text extraction failed. File may be image-based.")
-                    st.stop()
-
-                parsed = parse_resume_llama(resume_text)
-
-                # Autofill session state
-                pi = parsed.get("personal_info", {})
-
-                st.session_state.full_name = pi.get("full_name", "")
-                st.session_state.email = pi.get("email", "")
-                st.session_state.phone = pi.get("phone", "")
-                st.session_state.location = pi.get("location", "")
-                st.session_state.linkedin = pi.get("linkedin", "")
-                st.session_state.portfolio = pi.get("portfolio", "")
-                st.session_state.title = pi.get("title", "")
-                st.session_state.summary = parsed.get("summary", "")
-
-                skills = parsed.get("skills", {})
-                st.session_state.tech_skills = "\n".join(skills.get("technical", []))
-                st.session_state.soft_skills = "\n".join(skills.get("soft", []))
-                st.session_state.languages = "\n".join(skills.get("languages", []))
-                st.session_state.tools = "\n".join(skills.get("tools", []))
-
-                st.session_state.experience = parsed.get("experience", [])
-                st.session_state.education = parsed.get("education", [])
-
-                st.success("✅ Resume parsed successfully and form auto-filled!")
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"Parsing failed: {e}")
-
-# =========================================
-# RESUME BUILDER FORM
-# =========================================
-
-import streamlit as st
-from resume_builder import ResumeBuilder
-
-st.set_page_config(page_title="Advanced Resume Builder", layout="wide")
-
-builder = ResumeBuilder()
-
-# Dark Theme with Blue Glassmorphism CSS
+# ─── Hide Streamlit chrome ───────────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }
-
-    body, [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
-        min-height: 100vh;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-    }
-
-    [data-testid="stAppViewContainer"]::before {
-        content: '';
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background:
-            radial-gradient(circle at 20% 50%, rgba(41, 128, 185, 0.15) 0%, transparent 50%),
-            radial-gradient(circle at 80% 80%, rgba(52, 152, 219, 0.15) 0%, transparent 50%);
-        pointer-events: none;
-        z-index: 0;
-    }
-
-    [data-testid="stMainBlockContainer"] {
-        background: transparent;
-        position: relative;
-        z-index: 1;
-    }
-
-    .main {
-        background: transparent;
-    }
-
-    /* Glassmorphism Container */
-    .glass-container {
-        background: rgba(30, 41, 59, 0.4);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(148, 163, 184, 0.1);
-        border-radius: 24px;
-        padding: 32px;
-        box-shadow:
-            0 8px 32px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        margin-bottom: 24px;
-        transition: all 0.3s ease;
-    }
-
-    .glass-container:hover {
-        border-color: rgba(59, 130, 246, 0.3);
-        box-shadow:
-            0 12px 48px rgba(0, 0, 0, 0.4),
-            inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    }
-
-    .glass-box {
-        background: rgba(51, 65, 85, 0.3);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(148, 163, 184, 0.15);
-        border-radius: 20px;
-        padding: 24px;
-        margin-bottom: 20px;
-        box-shadow:
-            0 4px 16px rgba(0, 0, 0, 0.2),
-            inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        position: relative;
-        transition: all 0.3s ease;
-    }
-
-    .glass-box:hover {
-        border-color: rgba(59, 130, 246, 0.25);
-        transform: translateY(-2px);
-    }
-
-    /* Headings */
-    h1 {
-        color: #ffffff;
-        text-align: center;
-        font-size: 3.5rem;
-        font-weight: 700;
-        margin-bottom: 8px;
-        text-shadow: 0 2px 20px rgba(59, 130, 246, 0.3);
-        letter-spacing: -0.5px;
-        background: linear-gradient(135deg, #ffffff 0%, #3b82f6 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-
-    .tagline {
-        text-align: center;
-        color: rgba(203, 213, 225, 0.9);
-        font-size: 1.15rem;
-        margin-bottom: 48px;
-        font-weight: 400;
-        letter-spacing: 0.3px;
-    }
-
-    h2 {
-        color: #f1f5f9;
-        font-size: 1.5rem;
-        margin-bottom: 24px;
-        font-weight: 600;
-        letter-spacing: -0.3px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    h3 {
-        color: rgba(241, 245, 249, 0.95);
-        font-size: 1.25rem;
-        margin-bottom: 16px;
-        font-weight: 600;
-    }
-
-    /* Section Label */
-    .section-label {
-        color: #e2e8f0;
-        font-weight: 500;
-        font-size: 0.875rem;
-        display: block;
-        margin-bottom: 8px;
-        letter-spacing: 0.2px;
-        text-transform: uppercase;
-        font-size: 0.75rem;
-        opacity: 0.9;
-    }
-
-    /* Streamlit Input Override */
-    input, textarea, select {
-        background: rgba(51, 65, 85, 0.5) !important;
-        backdrop-filter: blur(8px) !important;
-        border: 1.5px solid rgba(148, 163, 184, 0.2) !important;
-        color: #f1f5f9 !important;
-        border-radius: 12px !important;
-        padding: 14px 18px !important;
-        font-size: 0.95rem !important;
-        font-family: 'Inter', sans-serif !important;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        font-weight: 400 !important;
-    }
-
-    input::placeholder, textarea::placeholder {
-        color: rgba(148, 163, 184, 0.5) !important;
-        font-weight: 400 !important;
-    }
-
-    input:hover, textarea:hover, select:hover {
-        border-color: rgba(59, 130, 246, 0.4) !important;
-        background: rgba(51, 65, 85, 0.6) !important;
-    }
-
-    input:focus, textarea:focus, select:focus {
-        background: rgba(51, 65, 85, 0.7) !important;
-        border-color: #3b82f6 !important;
-        box-shadow:
-            0 0 0 3px rgba(59, 130, 246, 0.1),
-            0 4px 20px rgba(59, 130, 246, 0.2) !important;
-        outline: none !important;
-    }
-
-    /* Textarea specific */
-    textarea {
-        line-height: 1.6 !important;
-        resize: vertical !important;
-    }
-
-    /* Buttons */
-    .stButton > button {
-        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
-        color: white !important;
-        border: 1px solid rgba(59, 130, 246, 0.3) !important;
-        border-radius: 12px !important;
-        padding: 14px 28px !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        font-family: 'Inter', sans-serif !important;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        box-shadow:
-            0 4px 16px rgba(59, 130, 246, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
-        cursor: pointer !important;
-        letter-spacing: 0.3px !important;
-    }
-
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow:
-            0 8px 24px rgba(59, 130, 246, 0.4),
-            inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
-        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-        border-color: rgba(59, 130, 246, 0.5) !important;
-    }
-
-    .stButton > button:active {
-        transform: translateY(0) !important;
-        box-shadow:
-            0 2px 8px rgba(59, 130, 246, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
-    }
-
-    /* Remove Button (Red variant) */
-    .stButton > button[kind="secondary"] {
-        background: rgba(239, 68, 68, 0.2) !important;
-        border-color: rgba(239, 68, 68, 0.3) !important;
-    }
-
-    .stButton > button[kind="secondary"]:hover {
-        background: rgba(239, 68, 68, 0.3) !important;
-        border-color: rgba(239, 68, 68, 0.5) !important;
-    }
-
-    /* Download Button */
-    .stDownloadButton > button {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-        border-color: rgba(16, 185, 129, 0.3) !important;
-    }
-
-    .stDownloadButton > button:hover {
-        background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
-        box-shadow:
-            0 8px 24px rgba(16, 185, 129, 0.4),
-            inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
-    }
-
-    /* Expander */
-    [data-testid="stExpander"] {
-        background: rgba(51, 65, 85, 0.3) !important;
-        border: 1px solid rgba(148, 163, 184, 0.15) !important;
-        border-radius: 16px !important;
-        backdrop-filter: blur(12px) !important;
-    }
-
-    .streamlit-expanderHeader {
-        color: #f1f5f9 !important;
-        font-weight: 600 !important;
-    }
-
-    /* Selectbox */
-    [data-baseweb="select"] {
-        background: rgba(51, 65, 85, 0.5) !important;
-        border-radius: 12px !important;
-    }
-
-    [data-baseweb="select"] > div {
-        background: rgba(51, 65, 85, 0.5) !important;
-        border-color: rgba(148, 163, 184, 0.2) !important;
-    }
-
-    [data-baseweb="select"]:hover > div {
-        border-color: rgba(59, 130, 246, 0.4) !important;
-    }
-
-    /* Dropdown menu */
-    [data-baseweb="popover"] {
-        background: rgba(30, 41, 59, 0.95) !important;
-        backdrop-filter: blur(20px) !important;
-        border: 1px solid rgba(148, 163, 184, 0.2) !important;
-        border-radius: 12px !important;
-    }
-
-    [role="option"] {
-        color: #f1f5f9 !important;
-        transition: all 0.2s ease !important;
-    }
-
-    [role="option"]:hover {
-        background: rgba(59, 130, 246, 0.2) !important;
-    }
-
-    /* Success/Error Messages */
-    .stSuccess {
-        background: rgba(16, 185, 129, 0.15) !important;
-        border: 1px solid rgba(16, 185, 129, 0.3) !important;
-        color: #d1fae5 !important;
-        border-radius: 12px !important;
-        backdrop-filter: blur(12px) !important;
-    }
-
-    .stError {
-        background: rgba(239, 68, 68, 0.15) !important;
-        border: 1px solid rgba(239, 68, 68, 0.3) !important;
-        color: #fee2e2 !important;
-        border-radius: 12px !important;
-        backdrop-filter: blur(12px) !important;
-    }
-
-    /* Divider */
-    hr {
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg,
-            rgba(148, 163, 184, 0),
-            rgba(148, 163, 184, 0.3),
-            rgba(148, 163, 184, 0)) !important;
-        margin: 32px 0 !important;
-    }
-
-    /* Preview Container */
-    .preview-container {
-        background: rgba(255, 255, 255, 0.98);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 20px;
-        padding: 48px;
-        box-shadow:
-            0 8px 32px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.5);
-        color: #1e293b;
-        font-family: 'Inter', 'Arial', sans-serif;
-        min-height: 800px;
-    }
-
-    .preview-header {
-        text-align: center;
-        border-bottom: 3px solid #3b82f6;
-        padding-bottom: 24px;
-        margin-bottom: 24px;
-    }
-
-    .preview-name {
-        font-size: 36px;
-        font-weight: 700;
-        color: #1e293b;
-        margin-bottom: 8px;
-        letter-spacing: -0.5px;
-    }
-
-    .preview-title {
-        font-size: 18px;
-        color: #3b82f6;
-        margin-bottom: 12px;
-        font-weight: 500;
-    }
-
-    .preview-contact {
-        font-size: 14px;
-        color: #64748b;
-        line-height: 1.8;
-    }
-
-    .preview-section {
-        margin-top: 28px;
-    }
-
-    .preview-section-title {
-        font-size: 20px;
-        font-weight: 700;
-        color: #1e293b;
-        border-bottom: 2px solid #3b82f6;
-        padding-bottom: 8px;
-        margin-bottom: 16px;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        font-size: 16px;
-    }
-
-    .preview-item {
-        margin-bottom: 20px;
-        padding-bottom: 16px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-    }
-
-    .preview-item:last-child {
-        border-bottom: none;
-    }
-
-    .preview-item-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 8px;
-    }
-
-    .preview-item-title {
-        font-weight: 600;
-        color: #1e293b;
-        font-size: 16px;
-    }
-
-    .preview-item-subtitle {
-        color: #3b82f6;
-        font-size: 14px;
-        margin-bottom: 4px;
-        font-weight: 500;
-    }
-
-    .preview-item-date {
-        color: #64748b;
-        font-size: 13px;
-        font-style: italic;
-        white-space: nowrap;
-    }
-
-    .preview-text {
-        color: #475569;
-        font-size: 14px;
-        line-height: 1.7;
-        margin-bottom: 10px;
-    }
-
-    .preview-list {
-        margin-left: 20px;
-        color: #475569;
-        font-size: 14px;
-        line-height: 1.8;
-    }
-
-    .preview-list ul {
-        margin-top: 6px;
-    }
-
-    .preview-list li {
-        margin-bottom: 4px;
-    }
-
-    .preview-skills {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 8px;
-    }
-
-    .preview-skill-tag {
-        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(37, 99, 235, 0.15));
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 13px;
-        color: #1e40af;
-        font-weight: 500;
-        transition: all 0.2s ease;
-    }
-
-    /* Column gaps */
-    [data-testid="column"] {
-        padding: 0 8px;
-    }
-
-    /* Remove default streamlit padding */
-    .block-container {
-        padding-top: 3rem !important;
-        padding-bottom: 3rem !important;
-    }
-
-    /* Scrollbar styling */
-    ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
-    }
-
-    ::-webkit-scrollbar-track {
-        background: rgba(30, 41, 59, 0.3);
-        border-radius: 10px;
-    }
-
-    ::-webkit-scrollbar-thumb {
-        background: rgba(59, 130, 246, 0.5);
-        border-radius: 10px;
-        border: 2px solid rgba(30, 41, 59, 0.3);
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-        background: rgba(59, 130, 246, 0.7);
-    }
-
-    /* Responsive */
-    @media (max-width: 1024px) {
-        h1 {
-            font-size: 2.5rem;
-        }
-
-        .glass-container {
-            padding: 24px;
-        }
-
-        .preview-container {
-            padding: 32px;
-        }
-    }
-
-    @media (max-width: 768px) {
-        h1 {
-            font-size: 2rem;
-        }
-
-        .glass-container {
-            padding: 20px;
-        }
-
-        .glass-box {
-            padding: 16px;
-        }
-
-        h2 {
-            font-size: 1.25rem;
-        }
-
-        .preview-container {
-            padding: 24px;
-        }
-    }
-
-    /* Loading animation */
-    @keyframes pulse {
-        0%, 100% {
-            opacity: 1;
-        }
-        50% {
-            opacity: 0.5;
-        }
-    }
-
-    /* Subtle animations */
-    .glass-container, .glass-box {
-        animation: fadeIn 0.5s ease-in-out;
-    }
-
-    @keyframes fadeIn {
-        from {
-            opacity: 0;
-            transform: translateY(10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
+#MainMenu, footer, header[data-testid="stHeader"],
+.stDeployButton, [data-testid="stToolbar"],
+[data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
+.stApp { background: #000 !important; }
+.stApp > div { padding: 0 !important; }
+[data-testid="stAppViewBlockContainer"] { padding: 0 !important; max-width: 100% !important; }
+[data-testid="block-container"] { padding: 0 !important; max-width: 100% !important; }
+section[data-testid="stMain"] > div { padding: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------------------------------------------
-# SESSION STATE INITIALIZATION
-# -------------------------------------------------------
-if "experience" not in st.session_state:
-    st.session_state.experience = []
-
-if "projects" not in st.session_state:
-    st.session_state.projects = []
-
-if "education" not in st.session_state:
-    st.session_state.education = []
-
-# Main Title
-st.markdown('<h1>Resume Builder Pro</h1>', unsafe_allow_html=True)
-st.markdown('<p class="tagline">Create your professional resume with live preview</p>', unsafe_allow_html=True)
-
-# Create two main columns: Form (left) and Preview (right)
-form_col, preview_col = st.columns([3, 2], gap="large")
-
-with form_col:
-    # -------------------------------------------------------
-    # PERSONAL INFORMATION SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>👤</span> Personal Information</h2>', unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2, gap="medium")
-
-    with col1:
-        st.markdown('<label class="section-label">Full Name</label>', unsafe_allow_html=True)
-        full_name = st.text_input("", placeholder="John Doe", key="full_name", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Email Address</label>', unsafe_allow_html=True)
-        email = st.text_input("", placeholder="john@example.com", key="email", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Phone Number</label>', unsafe_allow_html=True)
-        phone = st.text_input("", placeholder="+1 (555) 123-4567", key="phone", label_visibility="collapsed")
-
-    with col2:
-        st.markdown('<label class="section-label">Location</label>', unsafe_allow_html=True)
-        location = st.text_input("", placeholder="New York, USA", key="location", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">LinkedIn URL</label>', unsafe_allow_html=True)
-        linkedin = st.text_input("", placeholder="linkedin.com/in/yourname", key="linkedin", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Portfolio Website</label>', unsafe_allow_html=True)
-        portfolio = st.text_input("", placeholder="yourportfolio.com", key="portfolio", label_visibility="collapsed")
-
-    st.markdown('<label class="section-label">Professional Title</label>', unsafe_allow_html=True)
-    title = st.text_input("", placeholder="e.g., Full Stack Developer", key="title", label_visibility="collapsed")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # PROFESSIONAL SUMMARY SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>✨</span> Professional Summary</h2>', unsafe_allow_html=True)
-
-    st.markdown('<label class="section-label">Write a brief overview of your professional background</label>', unsafe_allow_html=True)
-    summary = st.text_area("", placeholder="Share your professional journey, key skills, and career goals...", height=120, key="summary", label_visibility="collapsed")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # EXPERIENCE SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>💼</span> Work Experience</h2>', unsafe_allow_html=True)
-
-    if st.button("+ Add Experience", use_container_width=True, key="add_exp_btn"):
-        st.session_state.experience.append({})
-        st.rerun()
-
-    for i, exp in enumerate(st.session_state.experience):
-        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
-
-        col_main, col_remove = st.columns([6, 1], gap="small")
-        with col_remove:
-            if st.button("✕", key=f"remove_exp_{i}", help="Remove this experience"):
-                st.session_state.experience.pop(i)
-                st.rerun()
-
-        col1, col2 = st.columns(2, gap="medium")
-        with col1:
-            st.markdown('<label class="section-label">Company Name</label>', unsafe_allow_html=True)
-            company = st.text_input("", placeholder="Tech Company Inc.", key=f"exp_company_{i}", label_visibility="collapsed")
-
-            st.markdown('<label class="section-label">Position</label>', unsafe_allow_html=True)
-            position = st.text_input("", placeholder="Senior Developer", key=f"exp_position_{i}", label_visibility="collapsed")
-
-        with col2:
-            st.markdown('<label class="section-label">Start Date</label>', unsafe_allow_html=True)
-            start_date = st.text_input("", placeholder="Jan 2020", key=f"exp_start_{i}", label_visibility="collapsed")
-
-            st.markdown('<label class="section-label">End Date</label>', unsafe_allow_html=True)
-            end_date = st.text_input("", placeholder="Present", key=f"exp_end_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Role Overview</label>', unsafe_allow_html=True)
-        description = st.text_area("", placeholder="Describe your main responsibilities...", height=80, key=f"exp_desc_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Key Responsibilities (one per line)</label>', unsafe_allow_html=True)
-        responsibilities = st.text_area("", placeholder="Led development of new features\nMentored junior developers\nOptimized database queries", height=80, key=f"exp_resp_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Key Achievements (one per line)</label>', unsafe_allow_html=True)
-        achievements = st.text_area("", placeholder="Increased app performance by 40%\nLaunched new product feature\nReduced server costs by 30%", height=80, key=f"exp_ach_{i}", label_visibility="collapsed")
-
-        st.session_state.experience[i] = {
-            "company": company,
-            "position": position,
-            "start_date": start_date,
-            "end_date": end_date,
-            "description": description,
-            "responsibilities": responsibilities,
-            "achievements": achievements
-        }
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # PROJECTS SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>🚀</span> Projects</h2>', unsafe_allow_html=True)
-
-    if st.button("+ Add Project", use_container_width=True, key="add_proj_btn"):
-        st.session_state.projects.append({})
-        st.rerun()
-
-    for i, proj in enumerate(st.session_state.projects):
-        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
-
-        col_main, col_remove = st.columns([6, 1], gap="small")
-        with col_remove:
-            if st.button("✕", key=f"remove_proj_{i}", help="Remove this project"):
-                st.session_state.projects.pop(i)
-                st.rerun()
-
-        st.markdown('<label class="section-label">Project Name</label>', unsafe_allow_html=True)
-        name = st.text_input("", placeholder="E-commerce Platform", key=f"proj_name_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Technologies Used</label>', unsafe_allow_html=True)
-        technologies = st.text_input("", placeholder="React, Node.js, MongoDB, AWS", key=f"proj_tech_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Project Overview</label>', unsafe_allow_html=True)
-        description = st.text_area("", placeholder="Describe what the project does...", height=80, key=f"proj_desc_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Key Responsibilities (one per line)</label>', unsafe_allow_html=True)
-        responsibilities = st.text_area("", placeholder="Designed system architecture\nBuilt REST API endpoints\nImplemented payment integration", height=80, key=f"proj_resp_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Key Achievements (one per line)</label>', unsafe_allow_html=True)
-        achievements = st.text_area("", placeholder="Served 10,000+ users\nAchieved 99.9% uptime\n50% faster checkout process", height=80, key=f"proj_ach_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Project Link (GitHub / Live URL)</label>', unsafe_allow_html=True)
-        link = st.text_input("", placeholder="https://github.com/yourname/project", key=f"proj_link_{i}", label_visibility="collapsed")
-
-        st.session_state.projects[i] = {
-            "name": name,
-            "technologies": technologies,
-            "description": description,
-            "responsibilities": responsibilities,
-            "achievements": achievements,
-            "link": link
-        }
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # EDUCATION SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>🎓</span> Education</h2>', unsafe_allow_html=True)
-
-    if st.button("+ Add Education", use_container_width=True, key="add_edu_btn"):
-        st.session_state.education.append({})
-        st.rerun()
-
-    for i, edu in enumerate(st.session_state.education):
-        st.markdown(f'<div class="glass-box">', unsafe_allow_html=True)
-
-        col_main, col_remove = st.columns([6, 1], gap="small")
-        with col_remove:
-            if st.button("✕", key=f"remove_edu_{i}", help="Remove this education"):
-                st.session_state.education.pop(i)
-                st.rerun()
-
-        col1, col2 = st.columns(2, gap="medium")
-        with col1:
-            st.markdown('<label class="section-label">School / University</label>', unsafe_allow_html=True)
-            school = st.text_input("", placeholder="University of Technology", key=f"edu_school_{i}", label_visibility="collapsed")
-
-            st.markdown('<label class="section-label">Degree</label>', unsafe_allow_html=True)
-            degree = st.text_input("", placeholder="Bachelor of Science", key=f"edu_degree_{i}", label_visibility="collapsed")
-
-        with col2:
-            st.markdown('<label class="section-label">Field of Study</label>', unsafe_allow_html=True)
-            field = st.text_input("", placeholder="Computer Science", key=f"edu_field_{i}", label_visibility="collapsed")
-
-            st.markdown('<label class="section-label">Graduation Date</label>', unsafe_allow_html=True)
-            graduation_date = st.text_input("", placeholder="May 2023", key=f"edu_grad_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">GPA (Optional)</label>', unsafe_allow_html=True)
-        gpa = st.text_input("", placeholder="3.8/4.0", key=f"edu_gpa_{i}", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Achievements & Activities (one per line)</label>', unsafe_allow_html=True)
-        achievements = st.text_area("", placeholder="Dean's List - all semesters\nPresident of Programming Club\nPublished research paper on AI", height=80, key=f"edu_ach_{i}", label_visibility="collapsed")
-
-        st.session_state.education[i] = {
-            "school": school,
-            "degree": degree,
-            "field": field,
-            "graduation_date": graduation_date,
-            "gpa": gpa,
-            "achievements": achievements
-        }
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # SKILLS SECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>⚡</span> Skills</h2>', unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        st.markdown('<label class="section-label">Technical Skills (one per line)</label>', unsafe_allow_html=True)
-        technical_skills = st.text_area("", placeholder="Python\nJavaScript\nReact\nSQL", height=100, key="tech_skills", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Languages (one per line)</label>', unsafe_allow_html=True)
-        languages = st.text_area("", placeholder="English (Native)\nSpanish (Fluent)\nFrench (Intermediate)", height=80, key="languages", label_visibility="collapsed")
-
-    with col2:
-        st.markdown('<label class="section-label">Soft Skills (one per line)</label>', unsafe_allow_html=True)
-        soft_skills = st.text_area("", placeholder="Leadership\nTeam Collaboration\nCommunication\nProblem Solving", height=100, key="soft_skills", label_visibility="collapsed")
-
-        st.markdown('<label class="section-label">Tools & Technologies (one per line)</label>', unsafe_allow_html=True)
-        tools = st.text_area("", placeholder="Git\nDocker\nJenkins\nAWS", height=80, key="tools", label_visibility="collapsed")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # TEMPLATE SELECTION
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-    st.markdown('<h2><span>🎨</span> Select Resume Template</h2>', unsafe_allow_html=True)
-
-    st.markdown('<label class="section-label">Choose your preferred resume template</label>', unsafe_allow_html=True)
-    template = st.selectbox("", ["Modern", "Professional", "Minimal", "Creative"], key="template", label_visibility="collapsed")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------
-    # GENERATE RESUME
-    # -------------------------------------------------------
-    st.markdown('<div class="glass-container">', unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        if st.button("Generate Resume", use_container_width=True, key="generate_btn"):
-
-            resume_data = {
-                "template": template,
-                "personal_info": {
-                    "full_name": full_name,
-                    "title": title,
-                    "email": email,
-                    "phone": phone,
-                    "location": location,
-                    "linkedin": linkedin,
-                    "portfolio": portfolio
-                },
-                "summary": summary,
-                "experience": st.session_state.experience,
-                "projects": st.session_state.projects,
-                "education": st.session_state.education,
-                "skills": {
-                    "technical": technical_skills,
-                    "soft": soft_skills,
-                    "languages": languages,
-                    "tools": tools
-                }
-            }
-
-            try:
-                buffer = builder.generate_resume(resume_data)
-
-                st.success("Resume Generated Successfully!")
-
-                file_name = f"{full_name.strip().replace(' ', '_') or 'Resume'}_Resume.docx"
-
-                st.download_button(
-                    label="Download Resume",
-                    data=buffer,
-                    file_name=file_name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
-                    key="download_btn"
-                )
-
-            except Exception as e:
-                st.error(f"Error generating resume: {e}")
-
-    with col2:
-        if st.button("Clear Form", use_container_width=True, key="clear_btn"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# -------------------------------------------------------
-# LIVE PREVIEW SECTION
-# -------------------------------------------------------
-with preview_col:
-    st.markdown('<h2 style="text-align: center; color: white; margin-bottom: 24px;">📋 Live Preview</h2>', unsafe_allow_html=True)
-
-    preview_html = '<div class="preview-container">'
-
-    # Header Section
-    preview_html += '<div class="preview-header">'
-    if full_name:
-        preview_html += f'<div class="preview-name">{full_name}</div>'
-    else:
-        preview_html += '<div class="preview-name" style="color: #94a3b8;">Your Name</div>'
-
-    if title:
-        preview_html += f'<div class="preview-title">{title}</div>'
-
-    preview_html += '<div class="preview-contact">'
-    contact_parts = []
-    if email:
-        contact_parts.append(email)
-    if phone:
-        contact_parts.append(phone)
-    if location:
-        contact_parts.append(location)
-
-    if contact_parts:
-        preview_html += ' | '.join(contact_parts) + '<br>'
-
-    if linkedin:
-        preview_html += f'LinkedIn: {linkedin}<br>'
-    if portfolio:
-        preview_html += f'Portfolio: {portfolio}'
-
-    preview_html += '</div></div>'
-
-    # Professional Summary
-    if summary:
-        preview_html += '<div class="preview-section">'
-        preview_html += '<div class="preview-section-title">Professional Summary</div>'
-        preview_html += f'<div class="preview-text">{summary}</div>'
-        preview_html += '</div>'
-
-    # Work Experience
-    if st.session_state.experience:
-        has_content = any(exp.get("company") or exp.get("position") for exp in st.session_state.experience)
-        if has_content:
-            preview_html += '<div class="preview-section">'
-            preview_html += '<div class="preview-section-title">Work Experience</div>'
-
-            for exp in st.session_state.experience:
-                if exp.get("company") or exp.get("position"):
-                    preview_html += '<div class="preview-item">'
-
-                    preview_html += '<div class="preview-item-header">'
-                    preview_html += '<div>'
-                    if exp.get("position"):
-                        preview_html += f'<div class="preview-item-title">{exp["position"]}</div>'
-                    if exp.get("company"):
-                        preview_html += f'<div class="preview-item-subtitle">{exp["company"]}</div>'
-                    preview_html += '</div>'
-
-                    if exp.get("start_date") or exp.get("end_date"):
-                        date_str = f'{exp.get("start_date", "")} - {exp.get("end_date", "")}'
-                        preview_html += f'<div class="preview-item-date">{date_str}</div>'
-
-                    preview_html += '</div>'
-
-                    if exp.get("description"):
-                        preview_html += f'<div class="preview-text">{exp["description"]}</div>'
-
-                    if exp.get("responsibilities"):
-                        responsibilities = [r.strip() for r in exp["responsibilities"].split('\n') if r.strip()]
-                        if responsibilities:
-                            preview_html += '<div class="preview-list"><strong>Key Responsibilities:</strong><ul>'
-                            for resp in responsibilities:
-                                preview_html += f'<li>{resp}</li>'
-                            preview_html += '</ul></div>'
-
-                    if exp.get("achievements"):
-                        achievements = [a.strip() for a in exp["achievements"].split('\n') if a.strip()]
-                        if achievements:
-                            preview_html += '<div class="preview-list"><strong>Key Achievements:</strong><ul>'
-                            for ach in achievements:
-                                preview_html += f'<li>{ach}</li>'
-                            preview_html += '</ul></div>'
-
-                    preview_html += '</div>'
-
-            preview_html += '</div>'
-
-    # Projects
-    if st.session_state.projects:
-        has_content = any(proj.get("name") for proj in st.session_state.projects)
-        if has_content:
-            preview_html += '<div class="preview-section">'
-            preview_html += '<div class="preview-section-title">Projects</div>'
-
-            for proj in st.session_state.projects:
-                if proj.get("name"):
-                    preview_html += '<div class="preview-item">'
-
-                    preview_html += f'<div class="preview-item-title">{proj["name"]}</div>'
-
-                    if proj.get("technologies"):
-                        preview_html += f'<div class="preview-item-subtitle">Technologies: {proj["technologies"]}</div>'
-
-                    if proj.get("description"):
-                        preview_html += f'<div class="preview-text">{proj["description"]}</div>'
-
-                    if proj.get("responsibilities"):
-                        responsibilities = [r.strip() for r in proj["responsibilities"].split('\n') if r.strip()]
-                        if responsibilities:
-                            preview_html += '<div class="preview-list"><strong>Key Responsibilities:</strong><ul>'
-                            for resp in responsibilities:
-                                preview_html += f'<li>{resp}</li>'
-                            preview_html += '</ul></div>'
-
-                    if proj.get("achievements"):
-                        achievements = [a.strip() for a in proj["achievements"].split('\n') if a.strip()]
-                        if achievements:
-                            preview_html += '<div class="preview-list"><strong>Key Achievements:</strong><ul>'
-                            for ach in achievements:
-                                preview_html += f'<li>{ach}</li>'
-                            preview_html += '</ul></div>'
-
-                    if proj.get("link"):
-                        preview_html += f'<div class="preview-text"><strong>Link:</strong> {proj["link"]}</div>'
-
-                    preview_html += '</div>'
-
-            preview_html += '</div>'
-
-    # Education
-    if st.session_state.education:
-        has_content = any(edu.get("school") or edu.get("degree") for edu in st.session_state.education)
-        if has_content:
-            preview_html += '<div class="preview-section">'
-            preview_html += '<div class="preview-section-title">Education</div>'
-
-            for edu in st.session_state.education:
-                if edu.get("school") or edu.get("degree"):
-                    preview_html += '<div class="preview-item">'
-
-                    preview_html += '<div class="preview-item-header">'
-                    preview_html += '<div>'
-                    if edu.get("degree"):
-                        degree_str = edu["degree"]
-                        if edu.get("field"):
-                            degree_str += f' in {edu["field"]}'
-                        preview_html += f'<div class="preview-item-title">{degree_str}</div>'
-                    if edu.get("school"):
-                        preview_html += f'<div class="preview-item-subtitle">{edu["school"]}</div>'
-                    preview_html += '</div>'
-
-                    if edu.get("graduation_date"):
-                        preview_html += f'<div class="preview-item-date">{edu["graduation_date"]}</div>'
-
-                    preview_html += '</div>'
-
-                    if edu.get("gpa"):
-                        preview_html += f'<div class="preview-text"><strong>GPA:</strong> {edu["gpa"]}</div>'
-
-                    if edu.get("achievements"):
-                        achievements = [a.strip() for a in edu["achievements"].split('\n') if a.strip()]
-                        if achievements:
-                            preview_html += '<div class="preview-list"><ul>'
-                            for ach in achievements:
-                                preview_html += f'<li>{ach}</li>'
-                            preview_html += '</ul></div>'
-
-                    preview_html += '</div>'
-
-            preview_html += '</div>'
-
-    # Skills
-    has_skills = technical_skills or soft_skills or languages or tools
-    if has_skills:
-        preview_html += '<div class="preview-section">'
-        preview_html += '<div class="preview-section-title">Skills</div>'
-
-        if technical_skills:
-            tech_list = [s.strip() for s in technical_skills.split('\n') if s.strip()]
-            if tech_list:
-                preview_html += '<div class="preview-item">'
-                preview_html += '<div class="preview-item-subtitle">Technical Skills</div>'
-                preview_html += '<div class="preview-skills">'
-                for skill in tech_list:
-                    preview_html += f'<span class="preview-skill-tag">{skill}</span>'
-                preview_html += '</div></div>'
-
-        if soft_skills:
-            soft_list = [s.strip() for s in soft_skills.split('\n') if s.strip()]
-            if soft_list:
-                preview_html += '<div class="preview-item">'
-                preview_html += '<div class="preview-item-subtitle">Soft Skills</div>'
-                preview_html += '<div class="preview-skills">'
-                for skill in soft_list:
-                    preview_html += f'<span class="preview-skill-tag">{skill}</span>'
-                preview_html += '</div></div>'
-
-        if languages:
-            lang_list = [l.strip() for l in languages.split('\n') if l.strip()]
-            if lang_list:
-                preview_html += '<div class="preview-item">'
-                preview_html += '<div class="preview-item-subtitle">Languages</div>'
-                preview_html += '<div class="preview-skills">'
-                for lang in lang_list:
-                    preview_html += f'<span class="preview-skill-tag">{lang}</span>'
-                preview_html += '</div></div>'
-
-        if tools:
-            tools_list = [t.strip() for t in tools.split('\n') if t.strip()]
-            if tools_list:
-                preview_html += '<div class="preview-item">'
-                preview_html += '<div class="preview-item-subtitle">Tools & Technologies</div>'
-                preview_html += '<div class="preview-skills">'
-                for tool in tools_list:
-                    preview_html += f'<span class="preview-skill-tag">{tool}</span>'
-                preview_html += '</div></div>'
-
-        preview_html += '</div>'
-
-    preview_html += '</div>'
-
-    # Display the preview
-    st.markdown(preview_html, unsafe_allow_html=True)
+# ─── Full 3D Storytelling Landing Page ───────────────────────────────────────
+LANDING_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HireLyzer</title>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Cinzel+Decorative:wght@700&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+
+<!-- Three.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- GSAP -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --ink:    #03060f;
+  --deep:   #070d1a;
+  --gold:   #e8c96a;
+  --gold2:  #f5e19a;
+  --cyan:   #38e8ff;
+  --violet: #9d6fff;
+  --rose:   #ff5f8f;
+  --steel:  #94a3b8;
+  --white:  #f0f4ff;
+}
+
+html { scroll-behavior: smooth; font-size: 16px; }
+
+body {
+  background: var(--ink);
+  color: var(--white);
+  font-family: 'DM Sans', sans-serif;
+  overflow-x: hidden;
+  cursor: none;
+}
+
+/* ── Custom cursor ── */
+#cursor {
+  width: 12px; height: 12px;
+  background: var(--gold);
+  border-radius: 50%;
+  position: fixed; top: 0; left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: difference;
+  transition: transform 0.1s ease, opacity 0.2s;
+}
+#cursor-ring {
+  width: 36px; height: 36px;
+  border: 1.5px solid rgba(232,201,106,0.5);
+  border-radius: 50%;
+  position: fixed; top: 0; left: 0;
+  pointer-events: none;
+  z-index: 9998;
+  transform: translate(-50%, -50%);
+  transition: all 0.18s ease;
+}
+
+/* ── HERO CANVAS ── */
+#hero {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#three-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 10;
+  text-align: center;
+  padding: 0 2rem;
+  max-width: 900px;
+}
+
+.hero-eyebrow {
+  font-family: 'Orbitron', sans-serif;
+  font-size: clamp(0.6rem, 1.2vw, 0.85rem);
+  letter-spacing: 0.4em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.hero-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(4rem, 11vw, 10rem);
+  line-height: 0.9;
+  letter-spacing: 0.05em;
+  background: linear-gradient(135deg, #fff 0%, var(--gold2) 40%, var(--gold) 70%, var(--cyan) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  opacity: 0;
+  transform: translateY(40px);
+  filter: drop-shadow(0 0 60px rgba(232,201,106,0.2));
+}
+
+.hero-sub {
+  font-size: clamp(1rem, 1.8vw, 1.3rem);
+  font-weight: 300;
+  color: var(--steel);
+  line-height: 1.7;
+  margin: 1.8rem auto;
+  max-width: 600px;
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.hero-sub em {
+  color: var(--cyan);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.cta-row {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  opacity: 0;
+  transform: translateY(20px);
+  margin-top: 2.5rem;
+}
+
+.btn-primary {
+  padding: 0.9rem 2.2rem;
+  background: linear-gradient(135deg, var(--gold), #c9a832);
+  color: #000;
+  border: none;
+  border-radius: 3px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 30px rgba(232,201,106,0.3), 0 4px 20px rgba(0,0,0,0.4);
+  text-decoration: none;
+  display: inline-block;
+}
+.btn-primary:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 0 50px rgba(232,201,106,0.5), 0 8px 30px rgba(0,0,0,0.5);
+}
+
+.btn-ghost {
+  padding: 0.9rem 2.2rem;
+  background: transparent;
+  color: var(--white);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 3px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  display: inline-block;
+}
+.btn-ghost:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  box-shadow: 0 0 25px rgba(56,232,255,0.15);
+}
+
+/* ── Scroll indicator ── */
+.scroll-hint {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  opacity: 0;
+}
+.scroll-hint span {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  color: rgba(255,255,255,0.3);
+}
+.scroll-line {
+  width: 1px;
+  height: 50px;
+  background: linear-gradient(to bottom, rgba(232,201,106,0.6), transparent);
+  animation: scrollPulse 2s ease-in-out infinite;
+}
+@keyframes scrollPulse {
+  0%, 100% { opacity: 0.3; transform: scaleY(0.8); }
+  50% { opacity: 1; transform: scaleY(1); }
+}
+
+/* ── SECTION BASE ── */
+section {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── STORY CHAPTERS ── */
+.chapter {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  padding: 8rem 6vw;
+}
+
+.chapter-number {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(5rem, 15vw, 14rem);
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(232,201,106,0.12);
+  position: absolute;
+  right: 5vw;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+.chapter-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.chapter-tag {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.4em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.chapter-tag::before {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 1px;
+  background: var(--gold);
+}
+
+.chapter-heading {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(2.8rem, 6vw, 6rem);
+  line-height: 1;
+  letter-spacing: 0.03em;
+  margin-bottom: 1.8rem;
+}
+
+.chapter-body {
+  font-size: clamp(1rem, 1.4vw, 1.2rem);
+  font-weight: 300;
+  line-height: 1.85;
+  color: var(--steel);
+  max-width: 560px;
+}
+.chapter-body strong {
+  color: var(--white);
+  font-weight: 500;
+}
+
+/* ── Chapter 1 — Problem ── */
+#ch1 { background: linear-gradient(160deg, #030712 0%, #0a0f1e 100%); }
+
+.pain-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-top: 3rem;
+}
+
+.pain-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 1.8rem 1.5rem;
+  transition: all 0.4s ease;
+  position: relative;
+  overflow: hidden;
+}
+.pain-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--rose), transparent);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.pain-card:hover {
+  transform: translateY(-6px);
+  background: rgba(255,95,143,0.05);
+  border-color: rgba(255,95,143,0.2);
+}
+.pain-card:hover::before { opacity: 1; }
+
+.pain-icon {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  display: block;
+}
+.pain-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  color: var(--rose);
+  margin-bottom: 0.6rem;
+  text-transform: uppercase;
+}
+.pain-desc {
+  font-size: 0.9rem;
+  color: var(--steel);
+  line-height: 1.6;
+}
+
+/* ── Chapter 2 — Solution ── */
+#ch2 { background: linear-gradient(160deg, #040d18 0%, #060e1c 100%); }
+
+.solution-visual {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-left: 3rem;
+}
+
+.ch2-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4rem;
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .ch2-layout { grid-template-columns: 1fr; }
+  .solution-visual { display: none; }
+}
+
+/* ── Animated pipeline ── */
+.pipeline {
+  width: 360px;
+  height: 400px;
+  position: relative;
+}
+
+.pipe-node {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pipe-node:nth-child(1) { top: 0; }
+.pipe-node:nth-child(2) { top: 25%; }
+.pipe-node:nth-child(3) { top: 50%; }
+.pipe-node:nth-child(4) { top: 75%; }
+
+.pipe-circle {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 2px solid rgba(56,232,255,0.4);
+  background: rgba(56,232,255,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  position: relative;
+  z-index: 2;
+}
+.pipe-circle.active {
+  border-color: var(--cyan);
+  background: rgba(56,232,255,0.12);
+  box-shadow: 0 0 30px rgba(56,232,255,0.3);
+}
+.pipe-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  white-space: nowrap;
+}
+
+.pipe-connector {
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  background: linear-gradient(to bottom, rgba(56,232,255,0.4), rgba(157,111,255,0.4));
+  transform: translateX(-50%);
+  overflow: hidden;
+}
+.pipe-connector::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 30px;
+  background: linear-gradient(to bottom, var(--cyan), transparent);
+  animation: flowDown 1.5s linear infinite;
+}
+@keyframes flowDown {
+  from { transform: translateY(-30px); }
+  to { transform: translateY(100%); }
+}
+.pipe-con-1 { top: calc(56px + 0%); height: calc(25% - 56px); }
+.pipe-con-2 { top: calc(56px + 25%); height: calc(25% - 56px); }
+.pipe-con-3 { top: calc(56px + 50%); height: calc(25% - 56px); }
+
+/* ── Chapter 3 — Features ── */
+#ch3 { background: var(--ink); }
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin-top: 4rem;
+}
+
+.feat-card {
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 2rem;
+  transition: all 0.4s ease;
+  position: relative;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(40px);
+}
+
+.feat-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 0%, rgba(232,201,106,0.06), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.feat-card:hover { transform: translateY(-8px); border-color: rgba(232,201,106,0.2); }
+.feat-card:hover::after { opacity: 1; }
+
+.feat-icon-wrap {
+  width: 52px; height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin-bottom: 1.2rem;
+}
+.feat-icon-wrap.gold   { background: rgba(232,201,106,0.12); border: 1px solid rgba(232,201,106,0.2); }
+.feat-icon-wrap.cyan   { background: rgba(56,232,255,0.10);  border: 1px solid rgba(56,232,255,0.2); }
+.feat-icon-wrap.violet { background: rgba(157,111,255,0.10); border: 1px solid rgba(157,111,255,0.2); }
+.feat-icon-wrap.rose   { background: rgba(255,95,143,0.10);  border: 1px solid rgba(255,95,143,0.2); }
+
+.feat-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: var(--white);
+  text-transform: uppercase;
+  margin-bottom: 0.8rem;
+}
+.feat-desc {
+  font-size: 0.92rem;
+  color: var(--steel);
+  line-height: 1.65;
+}
+
+/* ── Chapter 4 — Statistics ── */
+#ch4 {
+  background: linear-gradient(160deg, #05091a 0%, var(--ink) 100%);
+  text-align: center;
+  padding: 8rem 6vw;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2.5rem;
+  margin-top: 5rem;
+  max-width: 1000px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.stat-item { position: relative; }
+
+.stat-number {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(3.5rem, 7vw, 6rem);
+  line-height: 1;
+  background: linear-gradient(135deg, var(--gold2), var(--gold), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: block;
+}
+
+.stat-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--steel);
+  letter-spacing: 0.06em;
+  margin-top: 0.4rem;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.stat-divider {
+  width: 40px; height: 2px;
+  background: linear-gradient(to right, var(--gold), transparent);
+  margin: 0.8rem auto 0;
+}
+
+/* ── Chapter 5 — How it Works ── */
+#ch5 { background: var(--ink); padding: 8rem 6vw; }
+
+.steps-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 700px;
+  margin: 4rem auto 0;
+  position: relative;
+}
+.steps-timeline::before {
+  content: '';
+  position: absolute;
+  left: 27px;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, var(--gold), var(--violet), transparent);
+}
+
+.step-row {
+  display: flex;
+  gap: 2rem;
+  padding: 0 0 3rem 0;
+  position: relative;
+  opacity: 0;
+  transform: translateX(-30px);
+}
+
+.step-num {
+  width: 54px; height: 54px;
+  min-width: 54px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid rgba(232,201,106,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.9rem;
+  color: var(--gold);
+  position: relative;
+  z-index: 2;
+  transition: all 0.3s;
+}
+.step-row:hover .step-num {
+  border-color: var(--gold);
+  background: rgba(232,201,106,0.08);
+  box-shadow: 0 0 20px rgba(232,201,106,0.2);
+}
+
+.step-content {}
+.step-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.85rem;
+  color: var(--white);
+  letter-spacing: 0.06em;
+  margin-bottom: 0.5rem;
+  padding-top: 0.85rem;
+}
+.step-desc {
+  font-size: 0.95rem;
+  color: var(--steel);
+  line-height: 1.7;
+}
+
+/* ── Chapter 6 — CTA ── */
+#ch6 {
+  background: linear-gradient(135deg, #030611 0%, #08142b 50%, #030611 100%);
+  text-align: center;
+  padding: 10rem 6vw;
+  position: relative;
+}
+
+.cta-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(232,201,106,0.06), transparent);
+  pointer-events: none;
+}
+
+.cta-headline {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(3rem, 8vw, 7rem);
+  line-height: 0.95;
+  letter-spacing: 0.04em;
+  margin-bottom: 1.5rem;
+}
+
+.cta-headline span {
+  background: linear-gradient(135deg, var(--gold), var(--gold2), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.cta-sub {
+  font-size: 1.1rem;
+  color: var(--steel);
+  max-width: 500px;
+  margin: 0 auto 3rem;
+  line-height: 1.7;
+}
+
+/* ── NAV ── */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 1000;
+  padding: 1.5rem 4vw;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.4s ease;
+}
+nav.scrolled {
+  background: rgba(3,6,15,0.85);
+  backdrop-filter: blur(20px);
+  padding: 1rem 4vw;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.nav-logo {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--white);
+  text-decoration: none;
+}
+.nav-logo span { color: var(--gold); }
+
+.nav-links {
+  display: flex;
+  gap: 2.5rem;
+  list-style: none;
+}
+.nav-links a {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--steel);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  transition: color 0.2s;
+}
+.nav-links a:hover { color: var(--white); }
+
+.nav-cta {
+  padding: 0.55rem 1.4rem;
+  background: rgba(232,201,106,0.1);
+  border: 1px solid rgba(232,201,106,0.3);
+  border-radius: 3px;
+  color: var(--gold) !important;
+  font-family: 'Orbitron', sans-serif !important;
+  font-size: 0.65rem !important;
+  letter-spacing: 0.12em;
+  transition: all 0.3s !important;
+}
+.nav-cta:hover {
+  background: rgba(232,201,106,0.2) !important;
+  color: var(--gold2) !important;
+}
+
+@media (max-width: 768px) {
+  .nav-links { display: none; }
+}
+
+/* ── NOISE OVERLAY ── */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5000;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* ── FOOTER ── */
+footer {
+  background: #020509;
+  padding: 3rem 6vw;
+  text-align: center;
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+.footer-logo {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.3rem;
+  color: var(--steel);
+  letter-spacing: 0.2em;
+  margin-bottom: 1rem;
+}
+.footer-logo span { color: var(--gold); }
+.footer-text {
+  font-size: 0.8rem;
+  color: rgba(148,163,184,0.4);
+  letter-spacing: 0.06em;
+}
+
+/* ── PARTICLES ── */
+.particles-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+.particle {
+  position: absolute;
+  border-radius: 50%;
+  animation: particleDrift linear infinite;
+}
+@keyframes particleDrift {
+  from { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 0.6; }
+  to   { transform: translateY(-10vh) rotate(360deg); opacity: 0; }
+}
+
+/* ── SECTION DIVIDERS ── */
+.divider {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(232,201,106,0.2), transparent);
+  margin: 0;
+}
+
+/* ── GLOW LINES ── */
+.glow-line {
+  position: absolute;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(to right, transparent 0%, var(--cyan) 50%, transparent 100%);
+  opacity: 0.15;
+}
+
+/* ── LOGO GRID (trust strip) ── */
+.trust-strip {
+  padding: 3rem 6vw;
+  background: rgba(255,255,255,0.015);
+  border-top: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  text-align: center;
+}
+.trust-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.4em;
+  color: rgba(148,163,184,0.4);
+  margin-bottom: 1.5rem;
+  text-transform: uppercase;
+}
+.trust-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2rem;
+}
+.trust-badge {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: rgba(148,163,184,0.4);
+  letter-spacing: 0.06em;
+  transition: color 0.3s;
+  cursor: default;
+  padding: 0.4rem 1rem;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 100px;
+}
+.trust-badge:hover { color: var(--steel); border-color: rgba(255,255,255,0.1); }
+</style>
+</head>
+<body>
+
+<!-- Noise texture -->
+<div class="noise-overlay"></div>
+
+<!-- Custom cursor -->
+<div id="cursor"></div>
+<div id="cursor-ring"></div>
+
+<!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
+<nav id="main-nav">
+  <a href="#" class="nav-logo">HIRE<span>LYZER</span></a>
+  <ul class="nav-links">
+    <li><a href="#ch1">Problem</a></li>
+    <li><a href="#ch2">Solution</a></li>
+    <li><a href="#ch3">Features</a></li>
+    <li><a href="#ch5">How It Works</a></li>
+    <li><a href="#ch6" class="nav-cta">Get Access</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<section id="hero">
+  <canvas id="three-canvas"></canvas>
+
+  <div class="particles-container" id="particles"></div>
+
+  <div class="hero-content" id="hero-content">
+    <p class="hero-eyebrow" id="hero-eyebrow">Redefining AI-Powered Recruitment Intelligence</p>
+    <h1 class="hero-title" id="hero-title">HIRE<br>LYZER</h1>
+    <p class="hero-sub" id="hero-sub">
+      The world's most advanced resume intelligence platform.<br/>
+      From raw PDF to <em>precision-ranked candidate</em> in seconds.
+    </p>
+    <div class="cta-row" id="hero-cta">
+      <a href="#ch2" class="btn-primary">Explore the Platform</a>
+      <a href="#ch5" class="btn-ghost">See How It Works</a>
+    </div>
+  </div>
+
+  <div class="scroll-hint" id="scroll-hint">
+    <div class="scroll-line"></div>
+    <span>Scroll</span>
+  </div>
+</section>
+
+<!-- Trust strip -->
+<div class="trust-strip">
+  <p class="trust-label">Trusted Intelligence Stack</p>
+  <div class="trust-badges">
+    <span class="trust-badge">⚡ LangChain</span>
+    <span class="trust-badge">🧠 FAISS Vector Search</span>
+    <span class="trust-badge">🤖 Groq LLM</span>
+    <span class="trust-badge">🔒 Supabase PostgreSQL</span>
+    <span class="trust-badge">📊 HuggingFace Embeddings</span>
+    <span class="trust-badge">📄 PyMuPDF Parsing</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ CHAPTER 1 ═══════════════════════════ -->
+<section id="ch1" class="chapter">
+  <div class="chapter-number">01</div>
+  <div class="chapter-inner">
+    <div class="chapter-tag">The Problem</div>
+    <h2 class="chapter-heading">Hiring is<br/><span style="color:var(--rose)">Broken.</span></h2>
+    <p class="chapter-body">
+      Recruiters drown in hundreds of resumes per role.
+      <strong>Great candidates get filtered out</strong> by keyword-matching bots.
+      Bias creeps in. Decisions take weeks.
+      The system was built for a world that no longer exists.
+    </p>
+    <div class="pain-cards" id="pain-cards">
+      <div class="pain-card">
+        <span class="pain-icon">📋</span>
+        <p class="pain-title">Manual Overload</p>
+        <p class="pain-desc">Recruiters spend 23 seconds per resume — missing nuance, skills, and potential at scale.</p>
+      </div>
+      <div class="pain-card">
+        <span class="pain-icon">⚖️</span>
+        <p class="pain-title">Unconscious Bias</p>
+        <p class="pain-desc">Human reviewers carry systemic bias. Studies show names alone affect callback rates by 50%.</p>
+      </div>
+      <div class="pain-card">
+        <span class="pain-icon">🔑</span>
+        <p class="pain-title">Keyword Theatre</p>
+        <p class="pain-desc">Legacy ATS systems reward resume-stuffing, not genuine talent or cultural alignment.</p>
+      </div>
+      <div class="pain-card">
+        <span class="pain-icon">⏱️</span>
+        <p class="pain-title">Weeks of Delay</p>
+        <p class="pain-desc">Average time-to-hire is 44 days. Top candidates disappear long before decisions are made.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════ CHAPTER 2 ═══════════════════════════ -->
+<section id="ch2" class="chapter">
+  <div class="chapter-number">02</div>
+  <div class="chapter-inner">
+    <div class="ch2-layout">
+      <div>
+        <div class="chapter-tag">The Solution</div>
+        <h2 class="chapter-heading">Intelligence<br/>at <span style="color:var(--cyan)">Every Layer</span></h2>
+        <p class="chapter-body">
+          HireLyzer replaces guesswork with <strong>multi-dimensional AI analysis</strong>.
+          Every resume is processed through a pipeline of semantic embeddings,
+          LLM evaluation, bias detection, and ATS scoring —
+          giving you a complete, defensible candidate picture <strong>in seconds</strong>.
+        </p>
+        <br/><br/>
+        <a href="#ch3" class="btn-primary" style="margin-top:1rem;">See All Features →</a>
+      </div>
+
+      <div class="solution-visual">
+        <div class="pipeline" id="pipeline">
+          <!-- Connectors -->
+          <div class="pipe-connector pipe-con-1"></div>
+          <div class="pipe-connector pipe-con-2"></div>
+          <div class="pipe-connector pipe-con-3"></div>
+          <!-- Nodes -->
+          <div class="pipe-node">
+            <div class="pipe-circle active">📄</div>
+            <div class="pipe-label">Resume Input</div>
+          </div>
+          <div class="pipe-node">
+            <div class="pipe-circle">🧠</div>
+            <div class="pipe-label">LLM Analysis</div>
+          </div>
+          <div class="pipe-node">
+            <div class="pipe-circle">🔍</div>
+            <div class="pipe-label">Vector Matching</div>
+          </div>
+          <div class="pipe-node">
+            <div class="pipe-circle">✅</div>
+            <div class="pipe-label">ATS Score Output</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════ CHAPTER 3 ═══════════════════════════ -->
+<section id="ch3" class="chapter" style="flex-direction:column; align-items:flex-start;">
+  <div class="chapter-number" style="right:2vw;">03</div>
+  <div class="chapter-inner">
+    <div class="chapter-tag">Capabilities</div>
+    <h2 class="chapter-heading">Built for the<br/><span style="color:var(--gold)">Precision Era</span></h2>
+
+    <div class="features-grid" id="features-grid">
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap gold">⚡</div>
+        <p class="feat-title">Multi-Resume ATS Scoring</p>
+        <p class="feat-desc">Batch-process hundreds of resumes simultaneously. Each gets a precise ATS score across 6 dimensions — education, experience, skills, language, keywords, bias.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap cyan">🧠</div>
+        <p class="feat-title">Semantic Vector Search</p>
+        <p class="feat-desc">FAISS-powered embeddings surface the most semantically aligned candidates to your job description — beyond keyword matching into meaning.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap violet">🔍</div>
+        <p class="feat-title">Bias Detection Engine</p>
+        <p class="feat-desc">Real-time gender, age, and demographic bias scoring with configurable thresholds. Build a defensible, equitable hiring pipeline.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap rose">📊</div>
+        <p class="feat-title">Admin Analytics Dashboard</p>
+        <p class="feat-desc">Timeline trends, domain performance heatmaps, bias distributions, and ATS scoring analytics — all in a dark-mode live dashboard.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap gold">✉️</div>
+        <p class="feat-title">AI Cover Letter Writer</p>
+        <p class="feat-desc">LLM-powered cover letters tailored to the candidate's profile and target role — no templates, no clichés, pure executive-quality writing.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap cyan">🏗️</div>
+        <p class="feat-title">Resume Builder & Export</p>
+        <p class="feat-desc">Build ATS-optimized resumes from scratch with real-time scoring feedback. Export as polished PDF or DOCX with one click.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap violet">🔐</div>
+        <p class="feat-title">Secure Auth + OTP</p>
+        <p class="feat-desc">Enterprise-grade user management with email OTP verification, encrypted storage on Supabase PostgreSQL, and per-user API key isolation.</p>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon-wrap rose">🌐</div>
+        <p class="feat-title">Domain Intelligence</p>
+        <p class="feat-desc">Automatic domain detection across 20+ fields (Tech, Finance, Healthcare, Law, etc.) with cross-domain similarity scoring and ranking.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ CHAPTER 4 — STATS ═══════════════════════════ -->
+<section id="ch4">
+  <div class="glow-line" style="top:0;"></div>
+  <div class="chapter-tag" style="justify-content:center; margin-bottom:0.5rem;">By the Numbers</div>
+  <h2 class="chapter-heading" style="text-align:center; font-family:'Bebas Neue',sans-serif; font-size:clamp(2.5rem,5vw,5rem); letter-spacing:0.04em;">
+    Platform Scale
+  </h2>
+  <div class="stats-grid">
+    <div class="stat-item">
+      <span class="stat-number" data-target="500">0</span>
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">+</span>
+      <p class="stat-label">Resumes Analysed Daily</p>
+      <div class="stat-divider"></div>
+    </div>
+    <div class="stat-item">
+      <span class="stat-number" data-target="20">0</span>
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">+</span>
+      <p class="stat-label">Industry Domains</p>
+      <div class="stat-divider"></div>
+    </div>
+    <div class="stat-item">
+      <span class="stat-number" data-target="6">0</span>
+      <p class="stat-label">ATS Score Dimensions</p>
+      <div class="stat-divider"></div>
+    </div>
+    <div class="stat-item">
+      <span class="stat-number" data-target="3">0</span>
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">s</span>
+      <p class="stat-label">Average Analysis Time</p>
+      <div class="stat-divider"></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════ CHAPTER 5 ═══════════════════════════ -->
+<section id="ch5">
+  <div style="max-width:700px;margin:0 auto;text-align:center;padding:8rem 6vw 4rem;">
+    <div class="chapter-tag" style="justify-content:center;">Process</div>
+    <h2 class="chapter-heading" style="font-family:'Bebas Neue',sans-serif;font-size:clamp(2.8rem,6vw,5.5rem);letter-spacing:0.04em;">
+      From Resume to<br/><span style="color:var(--violet)">Decision-Ready</span>
+    </h2>
+  </div>
+
+  <div class="steps-timeline" id="steps-timeline">
+    <div class="step-row">
+      <div class="step-num">01</div>
+      <div class="step-content">
+        <p class="step-title">Upload & Ingest</p>
+        <p class="step-desc">Upload single or bulk resumes as PDFs. HireLyzer extracts structured text using PyMuPDF, handling complex layouts, tables, and multi-column formats automatically.</p>
+      </div>
+    </div>
+    <div class="step-row">
+      <div class="step-num">02</div>
+      <div class="step-content">
+        <p class="step-title">Semantic Chunking & Embedding</p>
+        <p class="step-desc">Resume text is split into semantic chunks and embedded via HuggingFace models into a FAISS vector store — enabling similarity-based search against your job description.</p>
+      </div>
+    </div>
+    <div class="step-row">
+      <div class="step-num">03</div>
+      <div class="step-content">
+        <p class="step-title">LLM Deep Analysis</p>
+        <p class="step-desc">Groq-powered LLM evaluates each candidate across education, experience quality, skills alignment, language proficiency, keyword density, and bias indicators.</p>
+      </div>
+    </div>
+    <div class="step-row">
+      <div class="step-num">04</div>
+      <div class="step-content">
+        <p class="step-title">ATS Scoring & Domain Classification</p>
+        <p class="step-desc">Each resume receives a composite ATS score (0–100) with sub-scores. Domain is auto-detected (Tech, Finance, Healthcare, etc.) and stored in Supabase PostgreSQL.</p>
+      </div>
+    </div>
+    <div class="step-row">
+      <div class="step-num">05</div>
+      <div class="step-content">
+        <p class="step-title">Ranked Output & Insights</p>
+        <p class="step-desc">Candidates are ranked, anomalies flagged, and an interactive analytics dashboard surfaces trends — giving every recruiter actionable, bias-aware intelligence.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ CHAPTER 6 — CTA ═══════════════════════════ -->
+<section id="ch6">
+  <div class="cta-glow"></div>
+  <div style="position:relative;z-index:2;max-width:800px;margin:0 auto;padding:10rem 6vw;text-align:center;">
+    <div class="chapter-tag" style="justify-content:center;margin-bottom:1.5rem;">The Future of Hiring</div>
+    <h2 class="cta-headline">
+      Don't Screen Resumes.<br/>
+      <span>Understand People.</span>
+    </h2>
+    <p class="cta-sub">
+      HireLyzer gives every recruiter, HR team, and hiring manager the intelligence
+      of a seasoned executive — instantly, at scale, without bias.
+    </p>
+    <div class="cta-row" style="opacity:1;transform:none;">
+      <a href="#hero" class="btn-primary">↑ Start Now — It's Free</a>
+      <a href="#ch3" class="btn-ghost">Explore Features</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <p class="footer-logo">HIRE<span>LYZER</span></p>
+  <p class="footer-text">AI Resume Intelligence Platform · Built with ❤️ using Streamlit, LangChain & Groq</p>
+</footer>
+
+<!-- ═══════════════════════════════ SCRIPTS ═══════════════════════════════ -->
+<script>
+// ── Three.js Hero Scene ──────────────────────────────────────────────────────
+(function() {
+  const canvas = document.getElementById('three-canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+  camera.position.set(0, 0, 5);
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ── Background grid ──
+  const gridGeo = new THREE.BufferGeometry();
+  const gridVerts = [];
+  const gridSize = 40, gridStep = 2;
+  for (let i = -gridSize; i <= gridSize; i += gridStep) {
+    gridVerts.push(-gridSize, 0, i, gridSize, 0, i);
+    gridVerts.push(i, 0, -gridSize, i, 0, gridSize);
+  }
+  gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridVerts, 3));
+  const gridMat = new THREE.LineBasicMaterial({ color: 0x1a2640, transparent: true, opacity: 0.5 });
+  const grid = new THREE.LineSegments(gridGeo, gridMat);
+  grid.position.y = -3;
+  grid.rotation.x = Math.PI / 2.2;
+  scene.add(grid);
+
+  // ── Floating geometric constellation ──
+  const nodeCount = 80;
+  const nodePositions = [];
+  const nodeGeo = new THREE.BufferGeometry();
+  const nodePosArr = [];
+  for (let i = 0; i < nodeCount; i++) {
+    const x = (Math.random() - 0.5) * 20;
+    const y = (Math.random() - 0.5) * 12;
+    const z = (Math.random() - 0.5) * 10 - 2;
+    nodePositions.push(new THREE.Vector3(x, y, z));
+    nodePosArr.push(x, y, z);
+  }
+  nodeGeo.setAttribute('position', new THREE.Float32BufferAttribute(nodePosArr, 3));
+  const nodeMat = new THREE.PointsMaterial({
+    color: 0xe8c96a,
+    size: 0.06,
+    transparent: true,
+    opacity: 0.7,
+    sizeAttenuation: true
+  });
+  const nodes = new THREE.Points(nodeGeo, nodeMat);
+  scene.add(nodes);
+
+  // ── Connecting edges ──
+  const edgeVerts = [];
+  for (let i = 0; i < nodeCount; i++) {
+    for (let j = i + 1; j < nodeCount; j++) {
+      if (nodePositions[i].distanceTo(nodePositions[j]) < 3.5) {
+        edgeVerts.push(nodePositions[i].x, nodePositions[i].y, nodePositions[i].z);
+        edgeVerts.push(nodePositions[j].x, nodePositions[j].y, nodePositions[j].z);
+      }
+    }
+  }
+  const edgeGeo = new THREE.BufferGeometry();
+  edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgeVerts, 3));
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x38e8ff, transparent: true, opacity: 0.06 });
+  scene.add(new THREE.LineSegments(edgeGeo, edgeMat));
+
+  // ── Central sphere ──
+  const sphereGeo = new THREE.IcosahedronGeometry(1.4, 4);
+  const sphereMat = new THREE.MeshBasicMaterial({
+    color: 0x4fa3e3,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.12
+  });
+  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+  scene.add(sphere);
+
+  // ── Inner glowing orb ──
+  const orbGeo = new THREE.SphereGeometry(0.6, 32, 32);
+  const orbMat = new THREE.MeshBasicMaterial({
+    color: 0xe8c96a,
+    transparent: true,
+    opacity: 0.04
+  });
+  const orb = new THREE.Mesh(orbGeo, orbMat);
+  scene.add(orb);
+
+  // ── Ring ──
+  const ringGeo = new THREE.TorusGeometry(2.2, 0.008, 2, 200);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xe8c96a, transparent: true, opacity: 0.2 });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = Math.PI / 2.5;
+  scene.add(ring);
+
+  const ring2Geo = new THREE.TorusGeometry(1.8, 0.005, 2, 200);
+  const ring2Mat = new THREE.MeshBasicMaterial({ color: 0x38e8ff, transparent: true, opacity: 0.15 });
+  const ring2 = new THREE.Mesh(ring2Geo, ring2Mat);
+  ring2.rotation.x = Math.PI / 3;
+  ring2.rotation.y = Math.PI / 6;
+  scene.add(ring2);
+
+  // ── Mouse influence ──
+  const mouse = { x: 0, y: 0 };
+  window.addEventListener('mousemove', e => {
+    mouse.x = (e.clientX / window.innerWidth - 0.5) * 2;
+    mouse.y = -(e.clientY / window.innerHeight - 0.5) * 2;
+  });
+
+  let t = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    t += 0.005;
+
+    sphere.rotation.y = t * 0.3;
+    sphere.rotation.x = t * 0.15;
+    ring.rotation.z = t * 0.2;
+    ring2.rotation.z = -t * 0.25;
+    nodes.rotation.y = t * 0.05;
+    grid.rotation.z = t * 0.01;
+
+    // Subtle camera parallax
+    camera.position.x += (mouse.x * 0.8 - camera.position.x) * 0.02;
+    camera.position.y += (mouse.y * 0.5 - camera.position.y) * 0.02;
+    camera.lookAt(0, 0, 0);
+
+    // Pulse orb
+    const scale = 1 + Math.sin(t * 2) * 0.15;
+    orb.scale.set(scale, scale, scale);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+
+// ── Custom Cursor ─────────────────────────────────────────────────────────────
+const cursor = document.getElementById('cursor');
+const ring = document.getElementById('cursor-ring');
+let cx = 0, cy = 0, rx = 0, ry = 0;
+document.addEventListener('mousemove', e => { cx = e.clientX; cy = e.clientY; });
+(function animCursor() {
+  requestAnimationFrame(animCursor);
+  rx += (cx - rx) * 0.12;
+  ry += (cy - ry) * 0.12;
+  cursor.style.left = cx + 'px';
+  cursor.style.top  = cy + 'px';
+  ring.style.left   = rx + 'px';
+  ring.style.top    = ry + 'px';
+})();
+document.querySelectorAll('a, button, .feat-card, .pain-card').forEach(el => {
+  el.addEventListener('mouseenter', () => { ring.style.transform = 'translate(-50%,-50%) scale(1.8)'; ring.style.borderColor = 'rgba(56,232,255,0.6)'; });
+  el.addEventListener('mouseleave', () => { ring.style.transform = 'translate(-50%,-50%) scale(1)'; ring.style.borderColor = 'rgba(232,201,106,0.5)'; });
+});
+
+// ── Nav scroll state ───────────────────────────────────────────────────────
+window.addEventListener('scroll', () => {
+  document.getElementById('main-nav').classList.toggle('scrolled', window.scrollY > 60);
+});
+
+// ── Particles ─────────────────────────────────────────────────────────────
+(function() {
+  const container = document.getElementById('particles');
+  const colors = ['#e8c96a', '#38e8ff', '#9d6fff', '#ff5f8f', '#ffffff'];
+  for (let i = 0; i < 30; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const size = Math.random() * 3 + 1;
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    p.style.cssText = `
+      width:${size}px; height:${size}px;
+      background:${color};
+      left:${Math.random()*100}%;
+      animation-duration:${8 + Math.random()*12}s;
+      animation-delay:${-Math.random()*10}s;
+      opacity:${0.3 + Math.random()*0.4};
+    `;
+    container.appendChild(p);
+  }
+})();
+
+// ── GSAP Animations ───────────────────────────────────────────────────────
+gsap.registerPlugin(ScrollTrigger);
+
+// Hero entrance
+const tl = gsap.timeline({ delay: 0.3 });
+tl.to('#hero-eyebrow', { opacity: 1, y: 0, duration: 1, ease: 'power3.out' })
+  .to('#hero-title',   { opacity: 1, y: 0, duration: 1.2, ease: 'power3.out' }, '-=0.6')
+  .to('#hero-sub',     { opacity: 1, y: 0, duration: 0.9, ease: 'power3.out' }, '-=0.6')
+  .to('#hero-cta',     { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }, '-=0.5')
+  .to('#scroll-hint',  { opacity: 1, duration: 0.8 }, '-=0.2');
+
+// Pain cards stagger
+gsap.fromTo('#pain-cards .pain-card',
+  { opacity: 0, y: 50 },
+  {
+    opacity: 1, y: 0,
+    duration: 0.7,
+    stagger: 0.12,
+    ease: 'power3.out',
+    scrollTrigger: { trigger: '#pain-cards', start: 'top 80%' }
+  }
+);
+
+// Feature cards stagger
+gsap.fromTo('#features-grid .feat-card',
+  { opacity: 0, y: 40 },
+  {
+    opacity: 1, y: 0,
+    duration: 0.6,
+    stagger: 0.1,
+    ease: 'power3.out',
+    scrollTrigger: { trigger: '#features-grid', start: 'top 75%' }
+  }
+);
+
+// Stats counter animation
+const statEls = document.querySelectorAll('.stat-number[data-target]');
+statEls.forEach(el => {
+  const target = +el.dataset.target;
+  ScrollTrigger.create({
+    trigger: el,
+    start: 'top 80%',
+    once: true,
+    onEnter: () => {
+      gsap.to({ val: 0 }, {
+        val: target,
+        duration: 2,
+        ease: 'power2.out',
+        onUpdate: function() { el.textContent = Math.round(this.targets()[0].val); }
+      });
+    }
+  });
+});
+
+// Steps timeline
+gsap.fromTo('#steps-timeline .step-row',
+  { opacity: 0, x: -40 },
+  {
+    opacity: 1, x: 0,
+    duration: 0.7,
+    stagger: 0.18,
+    ease: 'power3.out',
+    scrollTrigger: { trigger: '#steps-timeline', start: 'top 75%' }
+  }
+);
+
+// Pipeline nodes pulse
+const pipeNodes = document.querySelectorAll('.pipe-circle');
+let currentNode = 0;
+setInterval(() => {
+  pipeNodes.forEach(n => n.classList.remove('active'));
+  currentNode = (currentNode + 1) % pipeNodes.length;
+  pipeNodes[currentNode].classList.add('active');
+}, 1200);
+
+// Parallax chapter numbers
+document.querySelectorAll('.chapter-number').forEach(el => {
+  gsap.to(el, {
+    y: -100,
+    ease: 'none',
+    scrollTrigger: {
+      trigger: el.closest('section'),
+      start: 'top bottom',
+      end: 'bottom top',
+      scrub: 1
+    }
+  });
+});
+
+// CTA headline reveal
+gsap.fromTo('.cta-headline',
+  { opacity: 0, y: 60 },
+  {
+    opacity: 1, y: 0,
+    duration: 1.2,
+    ease: 'power3.out',
+    scrollTrigger: { trigger: '.cta-headline', start: 'top 80%' }
+  }
+);
+
+</script>
+</body>
+</html>
+"""
+
+components.html(LANDING_HTML, height=10000, scrolling=False)
