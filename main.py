@@ -1,1453 +1,1081 @@
 import os
 os.environ["STREAMLIT_WATCHDOG"] = "false"
+import json
+import random
+import string
+import re
+import asyncio
+import io
+import urllib.parse
+import base64
+from io import BytesIO
+from collections import Counter
+from datetime import datetime
+import time
 
+# Third-party library imports
 import streamlit as st
 import streamlit.components.v1 as components
+from base64 import b64encode
+import requests
+import fitz
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import altair as alt
+from PIL import Image
+from pdf2image import convert_from_path
+from dotenv import load_dotenv
+from nltk.stem import WordNetLemmatizer
+from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from xhtml2pdf import pisa
+from pydantic import BaseModel
+from streamlit_pdf_viewer import pdf_viewer
+import torch
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 
+from llm_manager import call_llm, load_groq_api_keys
+from db_manager import (
+    db_manager,
+    insert_candidate,
+    get_top_domains_by_score,
+    get_database_stats,
+    detect_domain_from_title_and_description,
+    get_domain_similarity
+)
+from user_login import (
+    create_user_table,
+    add_user,
+    complete_registration,
+    verify_user,
+    get_logins_today,
+    get_total_registered_users,
+    log_user_action,
+    username_exists,
+    email_exists,
+    is_valid_email,
+    save_user_api_key,
+    get_user_api_key,
+    get_all_user_logs,
+    generate_otp,
+    send_email_otp,
+    get_user_by_email,
+    update_password_by_email,
+    is_strong_password,
+    domain_has_mx_record
+)
+
+# ─────────────────────────────────────────────────────────────
+# STREAMLIT PAGE CONFIG
+# ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="HireLyzer — AI Resume Intelligence",
-    page_icon="⚡",
+    page_title="Hirelyzer — AI Resume Intelligence",
+    page_icon="⬡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ─── Hide Streamlit chrome ───────────────────────────────────────────────────
-st.markdown("""
-<style>
-#MainMenu, footer, header[data-testid="stHeader"],
-.stDeployButton, [data-testid="stToolbar"],
-[data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
-.stApp { background: #000 !important; }
-.stApp > div { padding: 0 !important; }
-[data-testid="stAppViewBlockContainer"] { padding: 0 !important; max-width: 100% !important; }
-[data-testid="block-container"] { padding: 0 !important; max-width: 100% !important; }
-section[data-testid="stMain"] > div { padding: 0 !important; }
-</style>
-""", unsafe_allow_html=True)
+APP_URL = "https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/"
 
-# ─── Full 3D Storytelling Landing Page ───────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# SESSION STATE INIT
+# ─────────────────────────────────────────────────────────────
+if "show_app" not in st.session_state:
+    st.session_state.show_app = False
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
+
+# ─────────────────────────────────────────────────────────────
+# QUERY PARAM ROUTING  (?page=app)
+# ─────────────────────────────────────────────────────────────
+params = st.query_params
+if params.get("page") == "app":
+    st.session_state.show_app = True
+
+# ─────────────────────────────────────────────────────────────
+# LANDING PAGE HTML  — dynamic, SVG-illustrated, animated
+# ─────────────────────────────────────────────────────────────
 LANDING_HTML = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>HireLyzer</title>
-
-<!-- Fonts -->
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Cinzel+Decorative:wght@700&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
-
-<!-- Three.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<!-- GSAP -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
-
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet"/>
 <style>
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-:root {
-  --ink:    #03060f;
-  --deep:   #070d1a;
-  --gold:   #e8c96a;
-  --gold2:  #f5e19a;
-  --cyan:   #38e8ff;
-  --violet: #9d6fff;
-  --rose:   #ff5f8f;
-  --steel:  #94a3b8;
-  --white:  #f0f4ff;
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#04080f;--s1:#0b1120;--s2:#111827;
+  --acc:#00e5b0;--acc2:#3b82f6;--acc3:#a78bfa;
+  --txt:#eef2ff;--muted:#5b7094;--dim:#1e293b;
+  --r:8px;
+}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--txt);
+  font-family:'Outfit',sans-serif;font-weight:300;
+  overflow-x:hidden;
 }
 
-html { scroll-behavior: smooth; font-size: 16px; }
-
-body {
-  background: var(--ink);
-  color: var(--white);
-  font-family: 'DM Sans', sans-serif;
-  overflow-x: hidden;
-  cursor: none;
-}
-
-/* ── Custom cursor ── */
-#cursor {
-  width: 12px; height: 12px;
-  background: var(--gold);
-  border-radius: 50%;
-  position: fixed; top: 0; left: 0;
-  pointer-events: none;
-  z-index: 9999;
-  transform: translate(-50%, -50%);
-  mix-blend-mode: difference;
-  transition: transform 0.1s ease, opacity 0.2s;
-}
-#cursor-ring {
-  width: 36px; height: 36px;
-  border: 1.5px solid rgba(232,201,106,0.5);
-  border-radius: 50%;
-  position: fixed; top: 0; left: 0;
-  pointer-events: none;
-  z-index: 9998;
-  transform: translate(-50%, -50%);
-  transition: all 0.18s ease;
-}
-
-/* ── HERO CANVAS ── */
-#hero {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-#three-canvas {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-.hero-content {
-  position: relative;
-  z-index: 10;
-  text-align: center;
-  padding: 0 2rem;
-  max-width: 900px;
-}
-
-.hero-eyebrow {
-  font-family: 'Orbitron', sans-serif;
-  font-size: clamp(0.6rem, 1.2vw, 0.85rem);
-  letter-spacing: 0.4em;
-  color: var(--gold);
-  text-transform: uppercase;
-  margin-bottom: 1.5rem;
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-.hero-title {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(4rem, 11vw, 10rem);
-  line-height: 0.9;
-  letter-spacing: 0.05em;
-  background: linear-gradient(135deg, #fff 0%, var(--gold2) 40%, var(--gold) 70%, var(--cyan) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  opacity: 0;
-  transform: translateY(40px);
-  filter: drop-shadow(0 0 60px rgba(232,201,106,0.2));
-}
-
-.hero-sub {
-  font-size: clamp(1rem, 1.8vw, 1.3rem);
-  font-weight: 300;
-  color: var(--steel);
-  line-height: 1.7;
-  margin: 1.8rem auto;
-  max-width: 600px;
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-.hero-sub em {
-  color: var(--cyan);
-  font-style: normal;
-  font-weight: 500;
-}
-
-.cta-row {
-  display: flex;
-  gap: 1rem;
-  justify-content: center;
-  flex-wrap: wrap;
-  opacity: 0;
-  transform: translateY(20px);
-  margin-top: 2.5rem;
-}
-
-.btn-primary {
-  padding: 0.9rem 2.2rem;
-  background: linear-gradient(135deg, var(--gold), #c9a832);
-  color: #000;
-  border: none;
-  border-radius: 3px;
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 0 30px rgba(232,201,106,0.3), 0 4px 20px rgba(0,0,0,0.4);
-  text-decoration: none;
-  display: inline-block;
-}
-.btn-primary:hover {
-  transform: translateY(-3px) scale(1.02);
-  box-shadow: 0 0 50px rgba(232,201,106,0.5), 0 8px 30px rgba(0,0,0,0.5);
-}
-
-.btn-ghost {
-  padding: 0.9rem 2.2rem;
-  background: transparent;
-  color: var(--white);
-  border: 1px solid rgba(255,255,255,0.2);
-  border-radius: 3px;
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.78rem;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  text-decoration: none;
-  display: inline-block;
-}
-.btn-ghost:hover {
-  border-color: var(--cyan);
-  color: var(--cyan);
-  box-shadow: 0 0 25px rgba(56,232,255,0.15);
-}
-
-/* ── Scroll indicator ── */
-.scroll-hint {
-  position: absolute;
-  bottom: 2.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  opacity: 0;
-}
-.scroll-hint span {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.6rem;
-  letter-spacing: 0.3em;
-  color: rgba(255,255,255,0.3);
-}
-.scroll-line {
-  width: 1px;
-  height: 50px;
-  background: linear-gradient(to bottom, rgba(232,201,106,0.6), transparent);
-  animation: scrollPulse 2s ease-in-out infinite;
-}
-@keyframes scrollPulse {
-  0%, 100% { opacity: 0.3; transform: scaleY(0.8); }
-  50% { opacity: 1; transform: scaleY(1); }
-}
-
-/* ── SECTION BASE ── */
-section {
-  position: relative;
-  overflow: hidden;
-}
-
-/* ── STORY CHAPTERS ── */
-.chapter {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  padding: 8rem 6vw;
-}
-
-.chapter-number {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(5rem, 15vw, 14rem);
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(232,201,106,0.12);
-  position: absolute;
-  right: 5vw;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  user-select: none;
-}
-
-.chapter-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.chapter-tag {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.7rem;
-  letter-spacing: 0.4em;
-  color: var(--gold);
-  text-transform: uppercase;
-  margin-bottom: 1.2rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.chapter-tag::before {
-  content: '';
-  display: block;
-  width: 40px;
-  height: 1px;
-  background: var(--gold);
-}
-
-.chapter-heading {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(2.8rem, 6vw, 6rem);
-  line-height: 1;
-  letter-spacing: 0.03em;
-  margin-bottom: 1.8rem;
-}
-
-.chapter-body {
-  font-size: clamp(1rem, 1.4vw, 1.2rem);
-  font-weight: 300;
-  line-height: 1.85;
-  color: var(--steel);
-  max-width: 560px;
-}
-.chapter-body strong {
-  color: var(--white);
-  font-weight: 500;
-}
-
-/* ── Chapter 1 — Problem ── */
-#ch1 { background: linear-gradient(160deg, #030712 0%, #0a0f1e 100%); }
-
-.pain-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1.5rem;
-  margin-top: 3rem;
-}
-
-.pain-card {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 12px;
-  padding: 1.8rem 1.5rem;
-  transition: all 0.4s ease;
-  position: relative;
-  overflow: hidden;
-}
-.pain-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--rose), transparent);
-  opacity: 0;
-  transition: opacity 0.4s;
-}
-.pain-card:hover {
-  transform: translateY(-6px);
-  background: rgba(255,95,143,0.05);
-  border-color: rgba(255,95,143,0.2);
-}
-.pain-card:hover::before { opacity: 1; }
-
-.pain-icon {
-  font-size: 2rem;
-  margin-bottom: 1rem;
-  display: block;
-}
-.pain-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.75rem;
-  letter-spacing: 0.1em;
-  color: var(--rose);
-  margin-bottom: 0.6rem;
-  text-transform: uppercase;
-}
-.pain-desc {
-  font-size: 0.9rem;
-  color: var(--steel);
-  line-height: 1.6;
-}
-
-/* ── Chapter 2 — Solution ── */
-#ch2 { background: linear-gradient(160deg, #040d18 0%, #060e1c 100%); }
-
-.solution-visual {
-  flex: 1;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding-left: 3rem;
-}
-
-.ch2-layout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4rem;
-  align-items: center;
-}
-@media (max-width: 900px) {
-  .ch2-layout { grid-template-columns: 1fr; }
-  .solution-visual { display: none; }
-}
-
-/* ── Animated pipeline ── */
-.pipeline {
-  width: 360px;
-  height: 400px;
-  position: relative;
-}
-
-.pipe-node {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-}
-.pipe-node:nth-child(1) { top: 0; }
-.pipe-node:nth-child(2) { top: 25%; }
-.pipe-node:nth-child(3) { top: 50%; }
-.pipe-node:nth-child(4) { top: 75%; }
-
-.pipe-circle {
-  width: 56px; height: 56px;
-  border-radius: 50%;
-  border: 2px solid rgba(56,232,255,0.4);
-  background: rgba(56,232,255,0.05);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.4rem;
-  position: relative;
-  z-index: 2;
-}
-.pipe-circle.active {
-  border-color: var(--cyan);
-  background: rgba(56,232,255,0.12);
-  box-shadow: 0 0 30px rgba(56,232,255,0.3);
-}
-.pipe-label {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  color: var(--cyan);
-  white-space: nowrap;
-}
-
-.pipe-connector {
-  position: absolute;
-  left: 50%;
-  width: 2px;
-  background: linear-gradient(to bottom, rgba(56,232,255,0.4), rgba(157,111,255,0.4));
-  transform: translateX(-50%);
-  overflow: hidden;
-}
-.pipe-connector::after {
-  content: '';
-  display: block;
-  width: 100%;
-  height: 30px;
-  background: linear-gradient(to bottom, var(--cyan), transparent);
-  animation: flowDown 1.5s linear infinite;
-}
-@keyframes flowDown {
-  from { transform: translateY(-30px); }
-  to { transform: translateY(100%); }
-}
-.pipe-con-1 { top: calc(56px + 0%); height: calc(25% - 56px); }
-.pipe-con-2 { top: calc(56px + 25%); height: calc(25% - 56px); }
-.pipe-con-3 { top: calc(56px + 50%); height: calc(25% - 56px); }
-
-/* ── Chapter 3 — Features ── */
-#ch3 { background: var(--ink); }
-
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
-  margin-top: 4rem;
-}
-
-.feat-card {
-  background: rgba(255,255,255,0.025);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 16px;
-  padding: 2rem;
-  transition: all 0.4s ease;
-  position: relative;
-  overflow: hidden;
-  opacity: 0;
-  transform: translateY(40px);
-}
-
-.feat-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 16px;
-  background: radial-gradient(circle at 50% 0%, rgba(232,201,106,0.06), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.4s;
-}
-.feat-card:hover { transform: translateY(-8px); border-color: rgba(232,201,106,0.2); }
-.feat-card:hover::after { opacity: 1; }
-
-.feat-icon-wrap {
-  width: 52px; height: 52px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-  margin-bottom: 1.2rem;
-}
-.feat-icon-wrap.gold   { background: rgba(232,201,106,0.12); border: 1px solid rgba(232,201,106,0.2); }
-.feat-icon-wrap.cyan   { background: rgba(56,232,255,0.10);  border: 1px solid rgba(56,232,255,0.2); }
-.feat-icon-wrap.violet { background: rgba(157,111,255,0.10); border: 1px solid rgba(157,111,255,0.2); }
-.feat-icon-wrap.rose   { background: rgba(255,95,143,0.10);  border: 1px solid rgba(255,95,143,0.2); }
-
-.feat-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  color: var(--white);
-  text-transform: uppercase;
-  margin-bottom: 0.8rem;
-}
-.feat-desc {
-  font-size: 0.92rem;
-  color: var(--steel);
-  line-height: 1.65;
-}
-
-/* ── Chapter 4 — Statistics ── */
-#ch4 {
-  background: linear-gradient(160deg, #05091a 0%, var(--ink) 100%);
-  text-align: center;
-  padding: 8rem 6vw;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 2.5rem;
-  margin-top: 5rem;
-  max-width: 1000px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.stat-item { position: relative; }
-
-.stat-number {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(3.5rem, 7vw, 6rem);
-  line-height: 1;
-  background: linear-gradient(135deg, var(--gold2), var(--gold), var(--cyan));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  display: block;
-}
-
-.stat-label {
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.9rem;
-  color: var(--steel);
-  letter-spacing: 0.06em;
-  margin-top: 0.4rem;
-  text-transform: uppercase;
-  font-size: 0.75rem;
-}
-
-.stat-divider {
-  width: 40px; height: 2px;
-  background: linear-gradient(to right, var(--gold), transparent);
-  margin: 0.8rem auto 0;
-}
-
-/* ── Chapter 5 — How it Works ── */
-#ch5 { background: var(--ink); padding: 8rem 6vw; }
-
-.steps-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  max-width: 700px;
-  margin: 4rem auto 0;
-  position: relative;
-}
-.steps-timeline::before {
-  content: '';
-  position: absolute;
-  left: 27px;
-  top: 0; bottom: 0;
-  width: 1px;
-  background: linear-gradient(to bottom, var(--gold), var(--violet), transparent);
-}
-
-.step-row {
-  display: flex;
-  gap: 2rem;
-  padding: 0 0 3rem 0;
-  position: relative;
-  opacity: 0;
-  transform: translateX(-30px);
-}
-
-.step-num {
-  width: 54px; height: 54px;
-  min-width: 54px;
-  border-radius: 50%;
-  background: var(--ink);
-  border: 2px solid rgba(232,201,106,0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.9rem;
-  color: var(--gold);
-  position: relative;
-  z-index: 2;
-  transition: all 0.3s;
-}
-.step-row:hover .step-num {
-  border-color: var(--gold);
-  background: rgba(232,201,106,0.08);
-  box-shadow: 0 0 20px rgba(232,201,106,0.2);
-}
-
-.step-content {}
-.step-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.85rem;
-  color: var(--white);
-  letter-spacing: 0.06em;
-  margin-bottom: 0.5rem;
-  padding-top: 0.85rem;
-}
-.step-desc {
-  font-size: 0.95rem;
-  color: var(--steel);
-  line-height: 1.7;
-}
-
-/* ── Chapter 6 — CTA ── */
-#ch6 {
-  background: linear-gradient(135deg, #030611 0%, #08142b 50%, #030611 100%);
-  text-align: center;
-  padding: 10rem 6vw;
-  position: relative;
-}
-
-.cta-glow {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(232,201,106,0.06), transparent);
-  pointer-events: none;
-}
-
-.cta-headline {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: clamp(3rem, 8vw, 7rem);
-  line-height: 0.95;
-  letter-spacing: 0.04em;
-  margin-bottom: 1.5rem;
-}
-
-.cta-headline span {
-  background: linear-gradient(135deg, var(--gold), var(--gold2), var(--cyan));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.cta-sub {
-  font-size: 1.1rem;
-  color: var(--steel);
-  max-width: 500px;
-  margin: 0 auto 3rem;
-  line-height: 1.7;
-}
+/* ── CANVAS PARTICLES ── */
+#cvs{position:fixed;inset:0;z-index:0;pointer-events:none}
 
 /* ── NAV ── */
-nav {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 1000;
-  padding: 1.5rem 4vw;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  transition: all 0.4s ease;
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:200;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 56px;
+  background:rgba(4,8,15,0.82);
+  backdrop-filter:blur(18px);
+  border-bottom:1px solid rgba(255,255,255,0.05);
 }
-nav.scrolled {
-  background: rgba(3,6,15,0.85);
-  backdrop-filter: blur(20px);
-  padding: 1rem 4vw;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+.logo{
+  font-family:'Syne',sans-serif;font-size:1.35rem;font-weight:800;
+  letter-spacing:-0.02em;
+  background:linear-gradient(120deg,var(--acc),var(--acc2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
 }
-.nav-logo {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 1.1rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--white);
-  text-decoration: none;
+.logo em{-webkit-text-fill-color:var(--muted);font-style:normal;font-weight:400}
+.nav-r{display:flex;align-items:center;gap:32px}
+.nav-r a{
+  color:var(--muted);text-decoration:none;font-size:.82rem;
+  letter-spacing:.07em;text-transform:uppercase;transition:color .2s
 }
-.nav-logo span { color: var(--gold); }
+.nav-r a:hover{color:var(--txt)}
+.nav-btn{
+  background:var(--acc);color:#04080f;
+  font-family:'Syne',sans-serif;font-weight:700;font-size:.78rem;
+  letter-spacing:.08em;text-transform:uppercase;
+  padding:10px 26px;border-radius:var(--r);text-decoration:none;
+  border:none;cursor:pointer;transition:box-shadow .25s,transform .2s;
+  box-shadow:0 0 24px rgba(0,229,176,.28);
+}
+.nav-btn:hover{box-shadow:0 0 44px rgba(0,229,176,.48);transform:translateY(-1px)}
 
-.nav-links {
-  display: flex;
-  gap: 2.5rem;
-  list-style: none;
+/* ── HERO ── */
+.hero{
+  position:relative;z-index:1;
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  text-align:center;padding:130px 40px 80px;
+  overflow:hidden;
 }
-.nav-links a {
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.85rem;
-  color: var(--steel);
-  text-decoration: none;
-  letter-spacing: 0.04em;
-  transition: color 0.2s;
+.hero-blob{
+  position:absolute;width:900px;height:900px;
+  background:radial-gradient(circle,rgba(0,229,176,.06) 0%,transparent 62%);
+  top:50%;left:50%;transform:translate(-50%,-55%);
+  animation:breathe 7s ease-in-out infinite;pointer-events:none;
 }
-.nav-links a:hover { color: var(--white); }
-
-.nav-cta {
-  padding: 0.55rem 1.4rem;
-  background: rgba(232,201,106,0.1);
-  border: 1px solid rgba(232,201,106,0.3);
-  border-radius: 3px;
-  color: var(--gold) !important;
-  font-family: 'Orbitron', sans-serif !important;
-  font-size: 0.65rem !important;
-  letter-spacing: 0.12em;
-  transition: all 0.3s !important;
+.hero-blob2{
+  position:absolute;width:600px;height:600px;
+  background:radial-gradient(circle,rgba(59,130,246,.05) 0%,transparent 62%);
+  top:40%;left:25%;transform:translate(-50%,-50%);
+  animation:breathe 9s 2s ease-in-out infinite;pointer-events:none;
 }
-.nav-cta:hover {
-  background: rgba(232,201,106,0.2) !important;
-  color: var(--gold2) !important;
-}
-
-@media (max-width: 768px) {
-  .nav-links { display: none; }
+@keyframes breathe{
+  0%,100%{transform:translate(-50%,-55%) scale(1)}
+  50%{transform:translate(-50%,-55%) scale(1.08)}
 }
 
-/* ── NOISE OVERLAY ── */
-.noise-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 5000;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+.pill{
+  display:inline-flex;align-items:center;gap:8px;
+  background:rgba(0,229,176,.07);border:1px solid rgba(0,229,176,.2);
+  border-radius:99px;padding:7px 20px;
+  font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--acc);
+  margin-bottom:36px;
+  animation:fadeUp .8s ease both;
 }
+.pill-dot{
+  width:6px;height:6px;border-radius:50%;background:var(--acc);
+  animation:blink 1.8s infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+h1{
+  font-family:'Syne',sans-serif;
+  font-size:clamp(2.8rem,7vw,6rem);
+  font-weight:800;line-height:1.0;letter-spacing:-.03em;
+  margin-bottom:26px;
+  animation:fadeUp .8s .1s ease both;
+}
+.g1{
+  background:linear-gradient(90deg,var(--acc) 0%,var(--acc2) 55%,var(--acc3) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.hero-sub{
+  font-size:1.08rem;color:var(--muted);
+  max-width:580px;line-height:1.75;margin-bottom:50px;
+  animation:fadeUp .8s .2s ease both;
+}
+.hero-btns{
+  display:flex;gap:14px;flex-wrap:wrap;justify-content:center;
+  animation:fadeUp .8s .3s ease both;
+}
+.btn-p{
+  background:var(--acc);color:#04080f;
+  font-family:'Syne',sans-serif;font-weight:700;font-size:.88rem;
+  letter-spacing:.07em;text-transform:uppercase;
+  padding:15px 42px;border-radius:var(--r);text-decoration:none;
+  border:none;cursor:pointer;
+  box-shadow:0 0 32px rgba(0,229,176,.3);
+  transition:transform .2s,box-shadow .2s;
+}
+.btn-p:hover{transform:translateY(-3px);box-shadow:0 0 56px rgba(0,229,176,.5)}
+.btn-g{
+  background:transparent;color:var(--txt);
+  font-family:'Syne',sans-serif;font-weight:600;font-size:.88rem;
+  letter-spacing:.07em;text-transform:uppercase;
+  padding:15px 42px;border-radius:var(--r);text-decoration:none;
+  border:1px solid rgba(255,255,255,.1);cursor:pointer;
+  transition:background .2s,border-color .2s;
+}
+.btn-g:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.22)}
+
+/* HERO SVG ILLUSTRATION */
+.hero-svg-wrap{
+  position:relative;z-index:1;
+  margin-top:72px;
+  animation:fadeUp .8s .5s ease both;
+  width:100%;max-width:860px;
+}
+
+/* STATS STRIP */
+.stats{
+  display:flex;gap:0;margin-top:60px;
+  border:1px solid rgba(255,255,255,.07);border-radius:var(--r);
+  overflow:hidden;animation:fadeUp .8s .55s ease both;
+}
+.stat{
+  flex:1;padding:22px 0;border-right:1px solid rgba(255,255,255,.07);
+  text-align:center;background:rgba(255,255,255,.02);
+}
+.stat:last-child{border-right:none}
+.sn{
+  font-family:'Syne',sans-serif;font-size:1.9rem;font-weight:800;
+  background:linear-gradient(135deg,var(--acc),var(--acc2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.sl{font-size:.7rem;color:var(--muted);letter-spacing:.09em;text-transform:uppercase;margin-top:4px}
+
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(22px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* ── SECTION WRAPPER ── */
+.sec{
+  position:relative;z-index:1;
+  padding:110px 60px;
+}
+.sec-inner{max-width:1180px;margin:0 auto}
+.sec-tag{
+  display:inline-block;font-size:.68rem;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--acc);border:1px solid rgba(0,229,176,.22);
+  padding:5px 14px;border-radius:3px;margin-bottom:18px;
+}
+.sec-h{
+  font-family:'Syne',sans-serif;
+  font-size:clamp(2rem,4vw,3.2rem);font-weight:800;
+  letter-spacing:-.025em;line-height:1.1;margin-bottom:14px;
+}
+.sec-p{color:var(--muted);max-width:520px;line-height:1.75}
+
+/* ── MODULES ── */
+#modules{background:var(--s1);border-top:1px solid rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.05)}
+.mod-hd{text-align:center;margin-bottom:72px}
+.mod-hd .sec-p{margin:0 auto}
+.modules-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:1px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:14px;overflow:hidden;
+}
+.mcard{
+  background:var(--bg);padding:42px 36px;
+  position:relative;overflow:hidden;
+  transition:background .3s;
+  cursor:pointer;text-decoration:none;color:inherit;display:block;
+}
+.mcard:hover{background:var(--s2)}
+.mcard::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--c,var(--acc)),transparent);
+  transform:scaleX(0);transform-origin:left;transition:transform .35s ease;
+}
+.mcard:hover::after{transform:scaleX(1)}
+.mcard-arrow{
+  position:absolute;top:38px;right:36px;
+  font-size:1rem;color:var(--muted);
+  transition:transform .3s,color .3s;
+}
+.mcard:hover .mcard-arrow{transform:translate(4px,-4px);color:var(--txt)}
+.mcard-num{
+  font-family:'Syne',sans-serif;font-size:.65rem;font-weight:700;
+  letter-spacing:.15em;text-transform:uppercase;
+  color:var(--c,var(--acc));margin-bottom:14px;
+}
+.mcard-title{
+  font-family:'Syne',sans-serif;font-size:1.18rem;font-weight:700;
+  margin-bottom:10px;line-height:1.25;
+}
+.mcard-desc{font-size:.87rem;color:var(--muted);line-height:1.72;margin-bottom:26px}
+.mcard-feats{list-style:none}
+.mcard-feats li{
+  font-size:.78rem;color:#3a4f6e;
+  padding:5px 0;display:flex;align-items:center;gap:9px;
+  border-top:1px solid rgba(255,255,255,.04);
+}
+.mcard-feats li::before{
+  content:'';width:3px;height:3px;border-radius:50%;
+  background:var(--c,var(--acc));flex-shrink:0;
+}
+
+/* Module SVG icons container */
+.mcard-svg{
+  width:52px;height:52px;margin-bottom:26px;
+  border-radius:10px;display:flex;align-items:center;justify-content:center;
+  background:var(--ic,rgba(0,229,176,.08));
+  border:1px solid var(--ib,rgba(0,229,176,.18));
+}
+
+/* ── HOW IT WORKS ── */
+.steps{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:48px;position:relative;
+}
+.steps::before{
+  content:'';position:absolute;top:34px;left:5%;right:5%;height:1px;
+  background:linear-gradient(90deg,transparent,var(--dim),transparent);
+}
+.step{position:relative;z-index:1}
+.step-circle{
+  width:52px;height:52px;border-radius:50%;
+  border:1px solid rgba(255,255,255,.09);
+  background:var(--s2);
+  display:flex;align-items:center;justify-content:center;
+  margin-bottom:20px;
+  font-family:'Syne',sans-serif;font-weight:800;font-size:.9rem;
+  color:var(--acc);
+}
+.step-t{font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;margin-bottom:8px}
+.step-d{font-size:.86rem;color:var(--muted);line-height:1.72}
+
+/* ── TECH ── */
+#tech{text-align:center}
+.tech-row{
+  display:flex;flex-wrap:wrap;gap:10px;justify-content:center;
+  max-width:900px;margin:40px auto 0;
+}
+.tbadge{
+  background:var(--s2);border:1px solid rgba(255,255,255,.07);
+  border-radius:4px;padding:7px 18px;
+  font-size:.78rem;color:var(--muted);letter-spacing:.06em;
+  transition:border-color .2s,color .2s;
+}
+.tbadge:hover{border-color:rgba(0,229,176,.3);color:var(--acc)}
+
+/* ── CTA ── */
+#cta{
+  text-align:center;overflow:hidden;
+  background:var(--s1);border-top:1px solid rgba(255,255,255,.05);
+}
+#cta::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at center,rgba(0,229,176,.06) 0%,transparent 68%);
+}
+#cta .sec-h{position:relative}
+#cta .sec-p{margin:0 auto 44px;position:relative}
 
 /* ── FOOTER ── */
-footer {
-  background: #020509;
-  padding: 3rem 6vw;
-  text-align: center;
-  border-top: 1px solid rgba(255,255,255,0.04);
+footer{
+  position:relative;z-index:1;
+  border-top:1px solid rgba(255,255,255,.06);
+  padding:36px 56px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:14px;
 }
-.footer-logo {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 1.3rem;
-  color: var(--steel);
-  letter-spacing: 0.2em;
-  margin-bottom: 1rem;
-}
-.footer-logo span { color: var(--gold); }
-.footer-text {
-  font-size: 0.8rem;
-  color: rgba(148,163,184,0.4);
-  letter-spacing: 0.06em;
-}
+.fc{font-size:.78rem;color:var(--muted)}
+.fl{display:flex;gap:24px}
+.fl a{font-size:.78rem;color:var(--muted);text-decoration:none}
+.fl a:hover{color:var(--txt)}
 
-/* ── PARTICLES ── */
-.particles-container {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 1;
-}
-.particle {
-  position: absolute;
-  border-radius: 50%;
-  animation: particleDrift linear infinite;
-}
-@keyframes particleDrift {
-  from { transform: translateY(100vh) rotate(0deg); opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 0.6; }
-  to   { transform: translateY(-10vh) rotate(360deg); opacity: 0; }
-}
+/* ── REVEAL ANIMATION ── */
+.rv{opacity:0;transform:translateY(28px);transition:opacity .75s ease,transform .75s ease}
+.rv.vis{opacity:1;transform:none}
 
-/* ── SECTION DIVIDERS ── */
-.divider {
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(to right, transparent, rgba(232,201,106,0.2), transparent);
-  margin: 0;
-}
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--dim);border-radius:99px}
 
-/* ── GLOW LINES ── */
-.glow-line {
-  position: absolute;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(to right, transparent 0%, var(--cyan) 50%, transparent 100%);
-  opacity: 0.15;
+@media(max-width:768px){
+  nav{padding:14px 20px}
+  .hero{padding:100px 20px 60px}
+  .sec{padding:72px 20px}
+  footer{padding:28px 20px;flex-direction:column}
+  .stats{flex-direction:column}
+  .stat{border-right:none;border-bottom:1px solid rgba(255,255,255,.07)}
+  .stat:last-child{border-bottom:none}
 }
-
-/* ── LOGO GRID (trust strip) ── */
-.trust-strip {
-  padding: 3rem 6vw;
-  background: rgba(255,255,255,0.015);
-  border-top: 1px solid rgba(255,255,255,0.04);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  text-align: center;
-}
-.trust-label {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.6rem;
-  letter-spacing: 0.4em;
-  color: rgba(148,163,184,0.4);
-  margin-bottom: 1.5rem;
-  text-transform: uppercase;
-}
-.trust-badges {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 2rem;
-}
-.trust-badge {
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.85rem;
-  color: rgba(148,163,184,0.4);
-  letter-spacing: 0.06em;
-  transition: color 0.3s;
-  cursor: default;
-  padding: 0.4rem 1rem;
-  border: 1px solid rgba(255,255,255,0.05);
-  border-radius: 100px;
-}
-.trust-badge:hover { color: var(--steel); border-color: rgba(255,255,255,0.1); }
 </style>
 </head>
 <body>
 
-<!-- Noise texture -->
-<div class="noise-overlay"></div>
+<canvas id="cvs"></canvas>
 
-<!-- Custom cursor -->
-<div id="cursor"></div>
-<div id="cursor-ring"></div>
-
-<!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
-<nav id="main-nav">
-  <a href="#" class="nav-logo">HIRE<span>LYZER</span></a>
-  <ul class="nav-links">
-    <li><a href="#ch1">Problem</a></li>
-    <li><a href="#ch2">Solution</a></li>
-    <li><a href="#ch3">Features</a></li>
-    <li><a href="#ch5">How It Works</a></li>
-    <li><a href="#ch6" class="nav-cta">Get Access</a></li>
-  </ul>
+<!-- NAV -->
+<nav>
+  <div class="logo">HIRE<em>LYZER</em></div>
+  <div class="nav-r">
+    <a href="#modules">Modules</a>
+    <a href="#how">How it works</a>
+    <a href="#tech">Stack</a>
+    <a class="nav-btn" href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">Launch App ↗</a>
+  </div>
 </nav>
 
-<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
-<section id="hero">
-  <canvas id="three-canvas"></canvas>
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-blob"></div>
+  <div class="hero-blob2"></div>
 
-  <div class="particles-container" id="particles"></div>
+  <div class="pill"><div class="pill-dot"></div>LLM-Powered · FAISS · Groq</div>
 
-  <div class="hero-content" id="hero-content">
-    <p class="hero-eyebrow" id="hero-eyebrow">Redefining AI-Powered Recruitment Intelligence</p>
-    <h1 class="hero-title" id="hero-title">HIRE<br>LYZER</h1>
-    <p class="hero-sub" id="hero-sub">
-      The world's most advanced resume intelligence platform.<br/>
-      From raw PDF to <em>precision-ranked candidate</em> in seconds.
-    </p>
-    <div class="cta-row" id="hero-cta">
-      <a href="#ch2" class="btn-primary">Explore the Platform</a>
-      <a href="#ch5" class="btn-ghost">See How It Works</a>
-    </div>
+  <h1>
+    <span style="display:block;color:var(--txt)">Resume intelligence,</span>
+    <span class="g1">redefined by AI.</span>
+  </h1>
+
+  <p class="hero-sub">
+    Hirelyzer is your end-to-end AI career platform — analyze, build, match, and upskill your way to your next role.
+  </p>
+
+  <div class="hero-btns">
+    <a class="btn-p" href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">Launch Platform →</a>
+    <a class="btn-g" href="#modules">Explore Modules</a>
   </div>
 
-  <div class="scroll-hint" id="scroll-hint">
-    <div class="scroll-line"></div>
-    <span>Scroll</span>
+  <!-- HERO SVG ILLUSTRATION — inline dynamic dashboard mockup -->
+  <div class="hero-svg-wrap">
+    <svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg" width="100%" style="border-radius:14px;border:1px solid rgba(255,255,255,.07);overflow:hidden">
+      <defs>
+        <linearGradient id="bg-g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#0b1120"/>
+          <stop offset="100%" stop-color="#06090f"/>
+        </linearGradient>
+        <linearGradient id="bar1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#00e5b0"/>
+          <stop offset="100%" stop-color="#00a878"/>
+        </linearGradient>
+        <linearGradient id="bar2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3b82f6"/>
+          <stop offset="100%" stop-color="#1d4ed8"/>
+        </linearGradient>
+        <linearGradient id="bar3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#a78bfa"/>
+          <stop offset="100%" stop-color="#7c3aed"/>
+        </linearGradient>
+        <linearGradient id="score-g" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#00e5b0"/>
+          <stop offset="100%" stop-color="#3b82f6"/>
+        </linearGradient>
+        <clipPath id="clip-bars">
+          <rect x="0" y="0" width="860" height="340"/>
+        </clipPath>
+        <filter id="glow">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- Background -->
+      <rect width="860" height="340" fill="url(#bg-g)"/>
+
+      <!-- Subtle grid lines -->
+      <g stroke="rgba(255,255,255,.03)" stroke-width="1">
+        <line x1="0" y1="85" x2="860" y2="85"/>
+        <line x1="0" y1="170" x2="860" y2="170"/>
+        <line x1="0" y1="255" x2="860" y2="255"/>
+        <line x1="215" y1="0" x2="215" y2="340"/>
+        <line x1="430" y1="0" x2="430" y2="340"/>
+        <line x1="645" y1="0" x2="645" y2="340"/>
+      </g>
+
+      <!-- Left panel: score ring area -->
+      <rect x="20" y="20" width="190" height="300" rx="10" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.07)" stroke-width=".5"/>
+      <!-- Score ring (SVG circle trick) -->
+      <circle cx="115" cy="110" r="52" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="8"/>
+      <circle cx="115" cy="110" r="52" fill="none" stroke="url(#score-g)" stroke-width="8"
+        stroke-dasharray="294" stroke-dashoffset="66"
+        stroke-linecap="round"
+        transform="rotate(-90 115 110)" filter="url(#glow)">
+        <animate attributeName="stroke-dashoffset" from="294" to="66" dur="2s" fill="freeze" calcMode="ease"/>
+      </circle>
+      <text x="115" y="105" text-anchor="middle" font-family="Syne,sans-serif" font-size="22" font-weight="800" fill="#00e5b0">87</text>
+      <text x="115" y="122" text-anchor="middle" font-family="Outfit,sans-serif" font-size="10" fill="#5b7094">AI SCORE</text>
+      <!-- Mini stats -->
+      <rect x="36" y="182" width="72" height="36" rx="6" fill="rgba(0,229,176,.07)" stroke="rgba(0,229,176,.15)" stroke-width=".5"/>
+      <text x="72" y="196" text-anchor="middle" font-family="Syne,sans-serif" font-size="13" font-weight="700" fill="#00e5b0">94%</text>
+      <text x="72" y="210" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#5b7094">ATS MATCH</text>
+      <rect x="122" y="182" width="72" height="36" rx="6" fill="rgba(59,130,246,.07)" stroke="rgba(59,130,246,.15)" stroke-width=".5"/>
+      <text x="158" y="196" text-anchor="middle" font-family="Syne,sans-serif" font-size="13" font-weight="700" fill="#3b82f6">12</text>
+      <text x="158" y="210" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#5b7094">SKILLS</text>
+      <!-- Domain tag -->
+      <rect x="36" y="234" width="158" height="22" rx="4" fill="rgba(167,139,250,.09)" stroke="rgba(167,139,250,.2)" stroke-width=".5"/>
+      <text x="115" y="248" text-anchor="middle" font-family="Outfit,sans-serif" font-size="9" fill="#a78bfa" letter-spacing="1.5">DATA SCIENCE</text>
+      <!-- Name placeholder -->
+      <rect x="36" y="268" width="158" height="8" rx="4" fill="rgba(255,255,255,.07)"/>
+      <rect x="36" y="283" width="110" height="6" rx="3" fill="rgba(255,255,255,.04)"/>
+      <rect x="36" y="295" width="80" height="6" rx="3" fill="rgba(255,255,255,.03)"/>
+
+      <!-- Center panel: bar chart -->
+      <rect x="228" y="20" width="285" height="300" rx="10" fill="rgba(255,255,255,.02)" stroke="rgba(255,255,255,.07)" stroke-width=".5"/>
+      <text x="248" y="46" font-family="Syne,sans-serif" font-size="11" font-weight="700" fill="#eef2ff">Skill Coverage</text>
+      <text x="248" y="60" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Top domain matches</text>
+
+      <!-- Bars -->
+      <g clip-path="url(#clip-bars)">
+        <!-- Python -->
+        <text x="248" y="96" font-family="Outfit,sans-serif" font-size="9" fill="#5b7094">Python</text>
+        <rect x="310" y="84" width="170" height="13" rx="3" fill="rgba(255,255,255,.04)"/>
+        <rect x="310" y="84" width="0" height="13" rx="3" fill="url(#bar1)">
+          <animate attributeName="width" from="0" to="155" dur="1.5s" begin=".3s" fill="freeze" calcMode="ease"/>
+        </rect>
+        <text x="490" y="95" font-family="Syne,sans-serif" font-size="8.5" font-weight="700" fill="#00e5b0">91%</text>
+
+        <!-- ML -->
+        <text x="248" y="126" font-family="Outfit,sans-serif" font-size="9" fill="#5b7094">Machine Learning</text>
+        <rect x="310" y="114" width="170" height="13" rx="3" fill="rgba(255,255,255,.04)"/>
+        <rect x="310" y="114" width="0" height="13" rx="3" fill="url(#bar1)">
+          <animate attributeName="width" from="0" to="138" dur="1.5s" begin=".45s" fill="freeze" calcMode="ease"/>
+        </rect>
+        <text x="490" y="125" font-family="Syne,sans-serif" font-size="8.5" font-weight="700" fill="#00e5b0">81%</text>
+
+        <!-- SQL -->
+        <text x="248" y="156" font-family="Outfit,sans-serif" font-size="9" fill="#5b7094">SQL / Databases</text>
+        <rect x="310" y="144" width="170" height="13" rx="3" fill="rgba(255,255,255,.04)"/>
+        <rect x="310" y="144" width="0" height="13" rx="3" fill="url(#bar2)">
+          <animate attributeName="width" from="0" to="120" dur="1.5s" begin=".6s" fill="freeze" calcMode="ease"/>
+        </rect>
+        <text x="490" y="155" font-family="Syne,sans-serif" font-size="8.5" font-weight="700" fill="#3b82f6">70%</text>
+
+        <!-- NLP -->
+        <text x="248" y="186" font-family="Outfit,sans-serif" font-size="9" fill="#5b7094">NLP</text>
+        <rect x="310" y="174" width="170" height="13" rx="3" fill="rgba(255,255,255,.04)"/>
+        <rect x="310" y="174" width="0" height="13" rx="3" fill="url(#bar3)">
+          <animate attributeName="width" from="0" to="100" dur="1.5s" begin=".75s" fill="freeze" calcMode="ease"/>
+        </rect>
+        <text x="490" y="185" font-family="Syne,sans-serif" font-size="8.5" font-weight="700" fill="#a78bfa">59%</text>
+
+        <!-- Deep Learning -->
+        <text x="248" y="216" font-family="Outfit,sans-serif" font-size="9" fill="#5b7094">Deep Learning</text>
+        <rect x="310" y="204" width="170" height="13" rx="3" fill="rgba(255,255,255,.04)"/>
+        <rect x="310" y="204" width="0" height="13" rx="3" fill="url(#bar2)">
+          <animate attributeName="width" from="0" to="85" dur="1.5s" begin=".9s" fill="freeze" calcMode="ease"/>
+        </rect>
+        <text x="490" y="215" font-family="Syne,sans-serif" font-size="8.5" font-weight="700" fill="#3b82f6">50%</text>
+      </g>
+
+      <!-- Divider line in center -->
+      <line x1="228" y1="246" x2="513" y2="246" stroke="rgba(255,255,255,.06)" stroke-width=".5"/>
+      <!-- Bottom label badges -->
+      <rect x="240" y="256" width="68" height="20" rx="4" fill="rgba(0,229,176,.08)" stroke="rgba(0,229,176,.18)" stroke-width=".5"/>
+      <text x="274" y="270" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#00e5b0">12 matched</text>
+      <rect x="318" y="256" width="74" height="20" rx="4" fill="rgba(59,130,246,.08)" stroke="rgba(59,130,246,.18)" stroke-width=".5"/>
+      <text x="355" y="270" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#3b82f6">4 gaps found</text>
+      <rect x="402" y="256" width="90" height="20" rx="4" fill="rgba(245,158,11,.08)" stroke="rgba(245,158,11,.18)" stroke-width=".5"/>
+      <text x="447" y="270" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#f59e0b">3 courses ready</text>
+
+      <!-- Mini line chart -->
+      <rect x="240" y="283" width="260" height="28" rx="5" fill="rgba(255,255,255,.015)"/>
+      <polyline points="248,302 265,296 282,299 300,291 318,294 336,287 354,290 372,283 390,286 408,280 426,284 444,278 462,281 480,274 492,278" fill="none" stroke="#00e5b0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
+      <circle cx="492" cy="278" r="3" fill="#00e5b0"/>
+      <text x="248" y="310" font-family="Outfit,sans-serif" font-size="7.5" fill="#3a4f6e">score trend</text>
+
+      <!-- Right panel: job matches -->
+      <rect x="526" y="20" width="314" height="300" rx="10" fill="rgba(255,255,255,.02)" stroke="rgba(255,255,255,.07)" stroke-width=".5"/>
+      <text x="546" y="46" font-family="Syne,sans-serif" font-size="11" font-weight="700" fill="#eef2ff">Top Job Matches</text>
+      <text x="546" y="60" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">AI-ranked for your profile</text>
+
+      <!-- Job cards -->
+      <!-- Card 1 -->
+      <rect x="540" y="70" width="286" height="58" rx="7" fill="rgba(0,229,176,.05)" stroke="rgba(0,229,176,.14)" stroke-width=".5"/>
+      <rect x="540" y="70" width="3" height="58" rx="2" fill="#00e5b0"/>
+      <text x="556" y="88" font-family="Syne,sans-serif" font-size="10.5" font-weight="700" fill="#eef2ff">ML Engineer</text>
+      <text x="556" y="102" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Google · Remote</text>
+      <rect x="690" y="76" width="34" height="16" rx="4" fill="rgba(0,229,176,.12)"/>
+      <text x="707" y="88" text-anchor="middle" font-family="Syne,sans-serif" font-size="8" font-weight="700" fill="#00e5b0">97%</text>
+      <rect x="556" y="111" width="60" height="10" rx="3" fill="rgba(255,255,255,.06)"/>
+      <rect x="624" y="111" width="44" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+      <rect x="676" y="111" width="50" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+
+      <!-- Card 2 -->
+      <rect x="540" y="138" width="286" height="58" rx="7" fill="rgba(59,130,246,.04)" stroke="rgba(59,130,246,.12)" stroke-width=".5"/>
+      <rect x="540" y="138" width="3" height="58" rx="2" fill="#3b82f6"/>
+      <text x="556" y="156" font-family="Syne,sans-serif" font-size="10.5" font-weight="700" fill="#eef2ff">Data Scientist</text>
+      <text x="556" y="170" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Amazon · Hybrid</text>
+      <rect x="690" y="144" width="34" height="16" rx="4" fill="rgba(59,130,246,.12)"/>
+      <text x="707" y="156" text-anchor="middle" font-family="Syne,sans-serif" font-size="8" font-weight="700" fill="#3b82f6">92%</text>
+      <rect x="556" y="179" width="54" height="10" rx="3" fill="rgba(255,255,255,.06)"/>
+      <rect x="618" y="179" width="48" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+      <rect x="674" y="179" width="56" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+
+      <!-- Card 3 -->
+      <rect x="540" y="206" width="286" height="58" rx="7" fill="rgba(167,139,250,.04)" stroke="rgba(167,139,250,.12)" stroke-width=".5"/>
+      <rect x="540" y="206" width="3" height="58" rx="2" fill="#a78bfa"/>
+      <text x="556" y="224" font-family="Syne,sans-serif" font-size="10.5" font-weight="700" fill="#eef2ff">AI Research Analyst</text>
+      <text x="556" y="238" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">OpenAI · Full-time</text>
+      <rect x="690" y="212" width="34" height="16" rx="4" fill="rgba(167,139,250,.12)"/>
+      <text x="707" y="224" text-anchor="middle" font-family="Syne,sans-serif" font-size="8" font-weight="700" fill="#a78bfa">88%</text>
+      <rect x="556" y="247" width="58" height="10" rx="3" fill="rgba(255,255,255,.06)"/>
+      <rect x="622" y="247" width="42" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+      <rect x="672" y="247" width="60" height="10" rx="3" fill="rgba(255,255,255,.04)"/>
+
+      <!-- Bottom strip -->
+      <rect x="540" y="275" width="286" height="30" rx="6" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.05)" stroke-width=".5"/>
+      <text x="553" y="295" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Showing 3 of</text>
+      <text x="607" y="295" font-family="Syne,sans-serif" font-size="9" font-weight="700" fill="#eef2ff">24 matches</text>
+      <text x="760" y="295" text-anchor="end" font-family="Outfit,sans-serif" font-size="8.5" fill="#00e5b0">View all →</text>
+
+      <!-- Top-right live badge -->
+      <rect x="780" y="24" width="50" height="18" rx="9" fill="rgba(0,229,176,.1)" stroke="rgba(0,229,176,.25)" stroke-width=".5"/>
+      <circle cx="791" cy="33" r="3" fill="#00e5b0"><animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/></circle>
+      <text x="800" y="37" font-family="Outfit,sans-serif" font-size="8" fill="#00e5b0">LIVE</text>
+    </svg>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="sn">4</div><div class="sl">Core Modules</div></div>
+    <div class="stat"><div class="sn">Groq</div><div class="sl">LLM Engine</div></div>
+    <div class="stat"><div class="sn">FAISS</div><div class="sl">Vector Search</div></div>
+    <div class="stat"><div class="sn">99%</div><div class="sl">ATS Friendly</div></div>
   </div>
 </section>
 
-<!-- Trust strip -->
-<div class="trust-strip">
-  <p class="trust-label">Trusted Intelligence Stack</p>
-  <div class="trust-badges">
-    <span class="trust-badge">⚡ LangChain</span>
-    <span class="trust-badge">🧠 FAISS Vector Search</span>
-    <span class="trust-badge">🤖 Groq LLM</span>
-    <span class="trust-badge">🔒 Supabase PostgreSQL</span>
-    <span class="trust-badge">📊 HuggingFace Embeddings</span>
-    <span class="trust-badge">📄 PyMuPDF Parsing</span>
-  </div>
-</div>
-
-<!-- ═══════════════════════════ CHAPTER 1 ═══════════════════════════ -->
-<section id="ch1" class="chapter">
-  <div class="chapter-number">01</div>
-  <div class="chapter-inner">
-    <div class="chapter-tag">The Problem</div>
-    <h2 class="chapter-heading">Hiring is<br/><span style="color:var(--rose)">Broken.</span></h2>
-    <p class="chapter-body">
-      Recruiters drown in hundreds of resumes per role.
-      <strong>Great candidates get filtered out</strong> by keyword-matching bots.
-      Bias creeps in. Decisions take weeks.
-      The system was built for a world that no longer exists.
-    </p>
-    <div class="pain-cards" id="pain-cards">
-      <div class="pain-card">
-        <span class="pain-icon">📋</span>
-        <p class="pain-title">Manual Overload</p>
-        <p class="pain-desc">Recruiters spend 23 seconds per resume — missing nuance, skills, and potential at scale.</p>
-      </div>
-      <div class="pain-card">
-        <span class="pain-icon">⚖️</span>
-        <p class="pain-title">Unconscious Bias</p>
-        <p class="pain-desc">Human reviewers carry systemic bias. Studies show names alone affect callback rates by 50%.</p>
-      </div>
-      <div class="pain-card">
-        <span class="pain-icon">🔑</span>
-        <p class="pain-title">Keyword Theatre</p>
-        <p class="pain-desc">Legacy ATS systems reward resume-stuffing, not genuine talent or cultural alignment.</p>
-      </div>
-      <div class="pain-card">
-        <span class="pain-icon">⏱️</span>
-        <p class="pain-title">Weeks of Delay</p>
-        <p class="pain-desc">Average time-to-hire is 44 days. Top candidates disappear long before decisions are made.</p>
-      </div>
+<!-- MODULES -->
+<section class="sec" id="modules">
+  <div class="sec-inner">
+    <div class="mod-hd rv">
+      <span class="sec-tag">Platform Modules</span>
+      <h2 class="sec-h">Everything you need to<br>land your next role.</h2>
+      <p class="sec-p">Four AI-powered modules — from resume analysis to personalized learning paths — tightly integrated in one platform.</p>
     </div>
-  </div>
-</section>
+    <div class="modules-grid rv">
 
-<div class="divider"></div>
-
-<!-- ═══════════════════════════ CHAPTER 2 ═══════════════════════════ -->
-<section id="ch2" class="chapter">
-  <div class="chapter-number">02</div>
-  <div class="chapter-inner">
-    <div class="ch2-layout">
-      <div>
-        <div class="chapter-tag">The Solution</div>
-        <h2 class="chapter-heading">Intelligence<br/>at <span style="color:var(--cyan)">Every Layer</span></h2>
-        <p class="chapter-body">
-          HireLyzer replaces guesswork with <strong>multi-dimensional AI analysis</strong>.
-          Every resume is processed through a pipeline of semantic embeddings,
-          LLM evaluation, bias detection, and ATS scoring —
-          giving you a complete, defensible candidate picture <strong>in seconds</strong>.
-        </p>
-        <br/><br/>
-        <a href="#ch3" class="btn-primary" style="margin-top:1rem;">See All Features →</a>
-      </div>
-
-      <div class="solution-visual">
-        <div class="pipeline" id="pipeline">
-          <!-- Connectors -->
-          <div class="pipe-connector pipe-con-1"></div>
-          <div class="pipe-connector pipe-con-2"></div>
-          <div class="pipe-connector pipe-con-3"></div>
-          <!-- Nodes -->
-          <div class="pipe-node">
-            <div class="pipe-circle active">📄</div>
-            <div class="pipe-label">Resume Input</div>
-          </div>
-          <div class="pipe-node">
-            <div class="pipe-circle">🧠</div>
-            <div class="pipe-label">LLM Analysis</div>
-          </div>
-          <div class="pipe-node">
-            <div class="pipe-circle">🔍</div>
-            <div class="pipe-label">Vector Matching</div>
-          </div>
-          <div class="pipe-node">
-            <div class="pipe-circle">✅</div>
-            <div class="pipe-label">ATS Score Output</div>
-          </div>
+      <!-- Module 01 -->
+      <a class="mcard" style="--c:#00e5b0;--ic:rgba(0,229,176,.07);--ib:rgba(0,229,176,.16)"
+         href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">
+        <span class="mcard-arrow">↗</span>
+        <div class="mcard-svg">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <circle cx="14" cy="14" r="10" stroke="#00e5b0" stroke-width="1.5" fill="none"/>
+            <circle cx="14" cy="14" r="10" stroke="#00e5b0" stroke-width="2.5" fill="none"
+              stroke-dasharray="56.5" stroke-dashoffset="12" stroke-linecap="round"
+              transform="rotate(-90 14 14)"/>
+            <text x="14" y="18" text-anchor="middle" font-family="Syne,sans-serif"
+              font-size="8" font-weight="800" fill="#00e5b0">87</text>
+          </svg>
         </div>
+        <div class="mcard-num">Module 01</div>
+        <div class="mcard-title">Resume Dashboard</div>
+        <div class="mcard-desc">Upload your resume and get an instant AI score, domain detection, and semantic benchmarking against top candidates.</div>
+        <ul class="mcard-feats">
+          <li>Resume scoring &amp; domain detection</li>
+          <li>FAISS semantic comparison</li>
+          <li>Keyword density analysis</li>
+          <li>Skill gap visualization</li>
+        </ul>
+      </a>
+
+      <!-- Module 02 -->
+      <a class="mcard" style="--c:#3b82f6;--ic:rgba(59,130,246,.07);--ib:rgba(59,130,246,.16)"
+         href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">
+        <span class="mcard-arrow">↗</span>
+        <div class="mcard-svg">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect x="5" y="4" width="18" height="22" rx="3" stroke="#3b82f6" stroke-width="1.5"/>
+            <line x1="9" y1="10" x2="19" y2="10" stroke="#3b82f6" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="9" y1="14" x2="19" y2="14" stroke="#3b82f6" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="9" y1="18" x2="15" y2="18" stroke="#3b82f6" stroke-width="1.2" stroke-linecap="round"/>
+            <circle cx="20" cy="21" r="4" fill="#3b82f6"/>
+            <line x1="18.5" y1="21" x2="21.5" y2="21" stroke="#04080f" stroke-width="1.2"/>
+            <line x1="20" y1="19.5" x2="20" y2="22.5" stroke="#04080f" stroke-width="1.2"/>
+          </svg>
+        </div>
+        <div class="mcard-num">Module 02</div>
+        <div class="mcard-title">Resume Builder</div>
+        <div class="mcard-desc">Build ATS-optimized resumes and LLM-crafted cover letters with a guided wizard. Export to PDF or DOCX instantly.</div>
+        <ul class="mcard-feats">
+          <li>Guided multi-section form</li>
+          <li>LLM-generated cover letters</li>
+          <li>One-click PDF &amp; DOCX export</li>
+          <li>Professional formatting engine</li>
+        </ul>
+      </a>
+
+      <!-- Module 03 -->
+      <a class="mcard" style="--c:#a78bfa;--ic:rgba(167,139,250,.07);--ib:rgba(167,139,250,.16)"
+         href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">
+        <span class="mcard-arrow">↗</span>
+        <div class="mcard-svg">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect x="4" y="7" width="14" height="16" rx="2" stroke="#a78bfa" stroke-width="1.4"/>
+            <rect x="10" y="10" width="14" height="16" rx="2" fill="#0b1120" stroke="#a78bfa" stroke-width="1.4"/>
+            <line x1="13" y1="15" x2="21" y2="15" stroke="#a78bfa" stroke-width="1.1" stroke-linecap="round"/>
+            <line x1="13" y1="18.5" x2="21" y2="18.5" stroke="#a78bfa" stroke-width="1.1" stroke-linecap="round"/>
+            <line x1="13" y1="22" x2="17" y2="22" stroke="#a78bfa" stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="mcard-num">Module 03</div>
+        <div class="mcard-title">Job Search</div>
+        <div class="mcard-desc">Discover job openings matched to your profile. Get real-time AI fit scores and apply smarter with targeted insights.</div>
+        <ul class="mcard-feats">
+          <li>Real-time job listing search</li>
+          <li>AI profile-to-job matching</li>
+          <li>Application fit analysis</li>
+          <li>Domain-aware ranking</li>
+        </ul>
+      </a>
+
+      <!-- Module 04 -->
+      <a class="mcard" style="--c:#f59e0b;--ic:rgba(245,158,11,.07);--ib:rgba(245,158,11,.16)"
+         href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">
+        <span class="mcard-arrow">↗</span>
+        <div class="mcard-svg">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect x="4" y="16" width="5" height="8" rx="1.5" fill="#f59e0b" opacity=".5"/>
+            <rect x="11.5" y="11" width="5" height="13" rx="1.5" fill="#f59e0b" opacity=".7"/>
+            <rect x="19" y="6" width="5" height="18" rx="1.5" fill="#f59e0b"/>
+            <polyline points="6.5,16 14,11 21.5,6" fill="none" stroke="#f59e0b" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="21.5" cy="6" r="2" fill="#f59e0b"/>
+          </svg>
+        </div>
+        <div class="mcard-num">Module 04</div>
+        <div class="mcard-title">Course Recommendations</div>
+        <div class="mcard-desc">Bridge skill gaps with personalized AI-curated learning paths tailored to your domain and target role.</div>
+        <ul class="mcard-feats">
+          <li>Gap-to-course mapping</li>
+          <li>Multi-platform curation</li>
+          <li>Role-specific roadmaps</li>
+          <li>Progress-aware suggestions</li>
+        </ul>
+      </a>
+
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="sec" id="how">
+  <div class="sec-inner">
+    <div class="rv" style="margin-bottom:64px">
+      <span class="sec-tag">Workflow</span>
+      <h2 class="sec-h">From upload to offer,<br>in four steps.</h2>
+    </div>
+    <div class="steps rv">
+      <div class="step">
+        <div class="step-circle">01</div>
+        <div class="step-t">Upload Resume</div>
+        <div class="step-d">Drop your PDF or DOCX. Our parser extracts structured data using PyMuPDF and python-docx.</div>
+      </div>
+      <div class="step">
+        <div class="step-circle">02</div>
+        <div class="step-t">AI Analysis</div>
+        <div class="step-d">Groq LLM + FAISS vector search scores and benchmarks your resume against domain profiles.</div>
+      </div>
+      <div class="step">
+        <div class="step-circle">03</div>
+        <div class="step-t">Get Insights</div>
+        <div class="step-d">Receive a detailed scorecard — strengths, gaps, top job matches, and skill heatmaps.</div>
+      </div>
+      <div class="step">
+        <div class="step-circle">04</div>
+        <div class="step-t">Build &amp; Apply</div>
+        <div class="step-d">Generate an optimized resume, cover letter, and learning plan — all export-ready in one click.</div>
+      </div>
+    </div>
+
+    <!-- HOW IT WORKS SVG FLOW DIAGRAM -->
+    <div class="rv" style="margin-top:72px">
+      <svg viewBox="0 0 860 120" xmlns="http://www.w3.org/2000/svg" width="100%">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M2 2L8 5L2 8" fill="none" stroke="#00e5b0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- Node 1 -->
+        <rect x="20" y="30" width="150" height="60" rx="8" fill="rgba(0,229,176,.07)" stroke="rgba(0,229,176,.25)" stroke-width=".8"/>
+        <text x="95" y="56" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" font-weight="700" fill="#00e5b0">Resume Upload</text>
+        <text x="95" y="72" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">PDF / DOCX / Text</text>
+        <text x="95" y="84" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#3a4f6e">PyMuPDF · python-docx</text>
+
+        <line x1="170" y1="60" x2="210" y2="60" stroke="#00e5b0" stroke-width="1" marker-end="url(#arr2)" stroke-dasharray="4 2"/>
+
+        <!-- Node 2 -->
+        <rect x="215" y="30" width="160" height="60" rx="8" fill="rgba(59,130,246,.07)" stroke="rgba(59,130,246,.25)" stroke-width=".8"/>
+        <text x="295" y="56" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" font-weight="700" fill="#3b82f6">LLM Analysis</text>
+        <text x="295" y="72" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Score · Domain · NER</text>
+        <text x="295" y="84" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#3a4f6e">Groq · LangChain</text>
+
+        <line x1="375" y1="60" x2="415" y2="60" stroke="#00e5b0" stroke-width="1" marker-end="url(#arr2)" stroke-dasharray="4 2"/>
+
+        <!-- Node 3 -->
+        <rect x="420" y="30" width="160" height="60" rx="8" fill="rgba(167,139,250,.07)" stroke="rgba(167,139,250,.25)" stroke-width=".8"/>
+        <text x="500" y="56" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" font-weight="700" fill="#a78bfa">Vector Search</text>
+        <text x="500" y="72" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Semantic matching</text>
+        <text x="500" y="84" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#3a4f6e">FAISS · HuggingFace</text>
+
+        <line x1="580" y1="60" x2="620" y2="60" stroke="#00e5b0" stroke-width="1" marker-end="url(#arr2)" stroke-dasharray="4 2"/>
+
+        <!-- Node 4 -->
+        <rect x="625" y="30" width="215" height="60" rx="8" fill="rgba(245,158,11,.07)" stroke="rgba(245,158,11,.25)" stroke-width=".8"/>
+        <text x="732" y="56" text-anchor="middle" font-family="Syne,sans-serif" font-size="10" font-weight="700" fill="#f59e0b">Jobs + Courses + Builder</text>
+        <text x="732" y="72" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8.5" fill="#5b7094">Matched output + export</text>
+        <text x="732" y="84" text-anchor="middle" font-family="Outfit,sans-serif" font-size="8" fill="#3a4f6e">Supabase · PDF · DOCX</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- TECH STACK -->
+<section class="sec" id="tech" style="background:var(--s1);border-top:1px solid rgba(255,255,255,.05)">
+  <div class="sec-inner" style="text-align:center">
+    <span class="sec-tag rv">Technology Stack</span>
+    <h2 class="sec-h rv">Built on a production-grade AI stack.</h2>
+    <div class="tech-row rv">
+      <div class="tbadge">Streamlit</div>
+      <div class="tbadge">Groq LLM</div>
+      <div class="tbadge">LangChain</div>
+      <div class="tbadge">FAISS</div>
+      <div class="tbadge">HuggingFace Embeddings</div>
+      <div class="tbadge">PyTorch</div>
+      <div class="tbadge">PyMuPDF</div>
+      <div class="tbadge">python-docx</div>
+      <div class="tbadge">xhtml2pdf</div>
+      <div class="tbadge">Supabase PostgreSQL</div>
+      <div class="tbadge">Matplotlib · Altair</div>
+      <div class="tbadge">Pydantic</div>
+      <div class="tbadge">NLTK</div>
+      <div class="tbadge">Pandas · NumPy</div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="sec" id="cta">
+  <div class="sec-inner" style="text-align:center;position:relative">
+    <div class="rv">
+      <span class="sec-tag">Get Started</span>
+      <h2 class="sec-h" style="margin-top:16px">Ready to transform<br>your job search?</h2>
+      <p class="sec-p">Sign up free and let AI handle resume scoring, job matching, and skill building — all in one place.</p>
+      <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:44px">
+        <a class="btn-p" href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">Launch Hirelyzer →</a>
+        <a class="btn-g" href="#modules">Explore Modules</a>
       </div>
     </div>
   </div>
 </section>
 
-<div class="divider"></div>
-
-<!-- ═══════════════════════════ CHAPTER 3 ═══════════════════════════ -->
-<section id="ch3" class="chapter" style="flex-direction:column; align-items:flex-start;">
-  <div class="chapter-number" style="right:2vw;">03</div>
-  <div class="chapter-inner">
-    <div class="chapter-tag">Capabilities</div>
-    <h2 class="chapter-heading">Built for the<br/><span style="color:var(--gold)">Precision Era</span></h2>
-
-    <div class="features-grid" id="features-grid">
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap gold">⚡</div>
-        <p class="feat-title">Multi-Resume ATS Scoring</p>
-        <p class="feat-desc">Batch-process hundreds of resumes simultaneously. Each gets a precise ATS score across 6 dimensions — education, experience, skills, language, keywords, bias.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap cyan">🧠</div>
-        <p class="feat-title">Semantic Vector Search</p>
-        <p class="feat-desc">FAISS-powered embeddings surface the most semantically aligned candidates to your job description — beyond keyword matching into meaning.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap violet">🔍</div>
-        <p class="feat-title">Bias Detection Engine</p>
-        <p class="feat-desc">Real-time gender, age, and demographic bias scoring with configurable thresholds. Build a defensible, equitable hiring pipeline.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap rose">📊</div>
-        <p class="feat-title">Admin Analytics Dashboard</p>
-        <p class="feat-desc">Timeline trends, domain performance heatmaps, bias distributions, and ATS scoring analytics — all in a dark-mode live dashboard.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap gold">✉️</div>
-        <p class="feat-title">AI Cover Letter Writer</p>
-        <p class="feat-desc">LLM-powered cover letters tailored to the candidate's profile and target role — no templates, no clichés, pure executive-quality writing.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap cyan">🏗️</div>
-        <p class="feat-title">Resume Builder & Export</p>
-        <p class="feat-desc">Build ATS-optimized resumes from scratch with real-time scoring feedback. Export as polished PDF or DOCX with one click.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap violet">🔐</div>
-        <p class="feat-title">Secure Auth + OTP</p>
-        <p class="feat-desc">Enterprise-grade user management with email OTP verification, encrypted storage on Supabase PostgreSQL, and per-user API key isolation.</p>
-      </div>
-
-      <div class="feat-card">
-        <div class="feat-icon-wrap rose">🌐</div>
-        <p class="feat-title">Domain Intelligence</p>
-        <p class="feat-desc">Automatic domain detection across 20+ fields (Tech, Finance, Healthcare, Law, etc.) with cross-domain similarity scoring and ranking.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════════════════ CHAPTER 4 — STATS ═══════════════════════════ -->
-<section id="ch4">
-  <div class="glow-line" style="top:0;"></div>
-  <div class="chapter-tag" style="justify-content:center; margin-bottom:0.5rem;">By the Numbers</div>
-  <h2 class="chapter-heading" style="text-align:center; font-family:'Bebas Neue',sans-serif; font-size:clamp(2.5rem,5vw,5rem); letter-spacing:0.04em;">
-    Platform Scale
-  </h2>
-  <div class="stats-grid">
-    <div class="stat-item">
-      <span class="stat-number" data-target="500">0</span>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">+</span>
-      <p class="stat-label">Resumes Analysed Daily</p>
-      <div class="stat-divider"></div>
-    </div>
-    <div class="stat-item">
-      <span class="stat-number" data-target="20">0</span>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">+</span>
-      <p class="stat-label">Industry Domains</p>
-      <div class="stat-divider"></div>
-    </div>
-    <div class="stat-item">
-      <span class="stat-number" data-target="6">0</span>
-      <p class="stat-label">ATS Score Dimensions</p>
-      <div class="stat-divider"></div>
-    </div>
-    <div class="stat-item">
-      <span class="stat-number" data-target="3">0</span>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:var(--gold);line-height:1;">s</span>
-      <p class="stat-label">Average Analysis Time</p>
-      <div class="stat-divider"></div>
-    </div>
-  </div>
-</section>
-
-<div class="divider"></div>
-
-<!-- ═══════════════════════════ CHAPTER 5 ═══════════════════════════ -->
-<section id="ch5">
-  <div style="max-width:700px;margin:0 auto;text-align:center;padding:8rem 6vw 4rem;">
-    <div class="chapter-tag" style="justify-content:center;">Process</div>
-    <h2 class="chapter-heading" style="font-family:'Bebas Neue',sans-serif;font-size:clamp(2.8rem,6vw,5.5rem);letter-spacing:0.04em;">
-      From Resume to<br/><span style="color:var(--violet)">Decision-Ready</span>
-    </h2>
-  </div>
-
-  <div class="steps-timeline" id="steps-timeline">
-    <div class="step-row">
-      <div class="step-num">01</div>
-      <div class="step-content">
-        <p class="step-title">Upload & Ingest</p>
-        <p class="step-desc">Upload single or bulk resumes as PDFs. HireLyzer extracts structured text using PyMuPDF, handling complex layouts, tables, and multi-column formats automatically.</p>
-      </div>
-    </div>
-    <div class="step-row">
-      <div class="step-num">02</div>
-      <div class="step-content">
-        <p class="step-title">Semantic Chunking & Embedding</p>
-        <p class="step-desc">Resume text is split into semantic chunks and embedded via HuggingFace models into a FAISS vector store — enabling similarity-based search against your job description.</p>
-      </div>
-    </div>
-    <div class="step-row">
-      <div class="step-num">03</div>
-      <div class="step-content">
-        <p class="step-title">LLM Deep Analysis</p>
-        <p class="step-desc">Groq-powered LLM evaluates each candidate across education, experience quality, skills alignment, language proficiency, keyword density, and bias indicators.</p>
-      </div>
-    </div>
-    <div class="step-row">
-      <div class="step-num">04</div>
-      <div class="step-content">
-        <p class="step-title">ATS Scoring & Domain Classification</p>
-        <p class="step-desc">Each resume receives a composite ATS score (0–100) with sub-scores. Domain is auto-detected (Tech, Finance, Healthcare, etc.) and stored in Supabase PostgreSQL.</p>
-      </div>
-    </div>
-    <div class="step-row">
-      <div class="step-num">05</div>
-      <div class="step-content">
-        <p class="step-title">Ranked Output & Insights</p>
-        <p class="step-desc">Candidates are ranked, anomalies flagged, and an interactive analytics dashboard surfaces trends — giving every recruiter actionable, bias-aware intelligence.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════════════════ CHAPTER 6 — CTA ═══════════════════════════ -->
-<section id="ch6">
-  <div class="cta-glow"></div>
-  <div style="position:relative;z-index:2;max-width:800px;margin:0 auto;padding:10rem 6vw;text-align:center;">
-    <div class="chapter-tag" style="justify-content:center;margin-bottom:1.5rem;">The Future of Hiring</div>
-    <h2 class="cta-headline">
-      Don't Screen Resumes.<br/>
-      <span>Understand People.</span>
-    </h2>
-    <p class="cta-sub">
-      HireLyzer gives every recruiter, HR team, and hiring manager the intelligence
-      of a seasoned executive — instantly, at scale, without bias.
-    </p>
-    <div class="cta-row" style="opacity:1;transform:none;">
-      <a href="#hero" class="btn-primary">↑ Start Now — It's Free</a>
-      <a href="#ch3" class="btn-ghost">Explore Features</a>
-    </div>
-  </div>
-</section>
-
-<!-- Footer -->
+<!-- FOOTER -->
 <footer>
-  <p class="footer-logo">HIRE<span>LYZER</span></p>
-  <p class="footer-text">AI Resume Intelligence Platform · Built with ❤️ using Streamlit, LangChain & Groq</p>
+  <div class="logo" style="font-size:1.1rem">HIRE<em>LYZER</em></div>
+  <div class="fc">© 2026 Hirelyzer · AI-Powered Resume Intelligence</div>
+  <div class="fl">
+    <a href="https://hirelyzer-drko7qngcms6cjxsvcnjjf.streamlit.app/" target="_blank">App</a>
+    <a href="#modules">Modules</a>
+    <a href="#how">How it works</a>
+  </div>
 </footer>
 
-<!-- ═══════════════════════════════ SCRIPTS ═══════════════════════════════ -->
 <script>
-// ── Three.js Hero Scene ──────────────────────────────────────────────────────
-(function() {
-  const canvas = document.getElementById('three-canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
-  camera.position.set(0, 0, 5);
-
-  function resize() {
-    const w = window.innerWidth, h = window.innerHeight;
-    renderer.setSize(w, h);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+// ── PARTICLE CANVAS ──
+(function(){
+  var c=document.getElementById('cvs'),ctx=c.getContext('2d');
+  var W,H,pts=[];
+  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+  resize();window.addEventListener('resize',resize);
+  for(var i=0;i<90;i++){
+    pts.push({
+      x:Math.random()*W,y:Math.random()*H,
+      vx:(Math.random()-.5)*.25,vy:(Math.random()-.5)*.25,
+      r:Math.random()*1.5+.4,
+      a:Math.random()
+    });
   }
-  resize();
-  window.addEventListener('resize', resize);
-
-  // ── Background grid ──
-  const gridGeo = new THREE.BufferGeometry();
-  const gridVerts = [];
-  const gridSize = 40, gridStep = 2;
-  for (let i = -gridSize; i <= gridSize; i += gridStep) {
-    gridVerts.push(-gridSize, 0, i, gridSize, 0, i);
-    gridVerts.push(i, 0, -gridSize, i, 0, gridSize);
-  }
-  gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridVerts, 3));
-  const gridMat = new THREE.LineBasicMaterial({ color: 0x1a2640, transparent: true, opacity: 0.5 });
-  const grid = new THREE.LineSegments(gridGeo, gridMat);
-  grid.position.y = -3;
-  grid.rotation.x = Math.PI / 2.2;
-  scene.add(grid);
-
-  // ── Floating geometric constellation ──
-  const nodeCount = 80;
-  const nodePositions = [];
-  const nodeGeo = new THREE.BufferGeometry();
-  const nodePosArr = [];
-  for (let i = 0; i < nodeCount; i++) {
-    const x = (Math.random() - 0.5) * 20;
-    const y = (Math.random() - 0.5) * 12;
-    const z = (Math.random() - 0.5) * 10 - 2;
-    nodePositions.push(new THREE.Vector3(x, y, z));
-    nodePosArr.push(x, y, z);
-  }
-  nodeGeo.setAttribute('position', new THREE.Float32BufferAttribute(nodePosArr, 3));
-  const nodeMat = new THREE.PointsMaterial({
-    color: 0xe8c96a,
-    size: 0.06,
-    transparent: true,
-    opacity: 0.7,
-    sizeAttenuation: true
-  });
-  const nodes = new THREE.Points(nodeGeo, nodeMat);
-  scene.add(nodes);
-
-  // ── Connecting edges ──
-  const edgeVerts = [];
-  for (let i = 0; i < nodeCount; i++) {
-    for (let j = i + 1; j < nodeCount; j++) {
-      if (nodePositions[i].distanceTo(nodePositions[j]) < 3.5) {
-        edgeVerts.push(nodePositions[i].x, nodePositions[i].y, nodePositions[i].z);
-        edgeVerts.push(nodePositions[j].x, nodePositions[j].y, nodePositions[j].z);
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    for(var i=0;i<pts.length;i++){
+      var p=pts[i];
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<0)p.x=W;if(p.x>W)p.x=0;
+      if(p.y<0)p.y=H;if(p.y>H)p.y=0;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle='rgba(0,229,176,'+(p.a*.35)+')';
+      ctx.fill();
+      for(var j=i+1;j<pts.length;j++){
+        var q=pts[j],dx=p.x-q.x,dy=p.y-q.y,d=Math.sqrt(dx*dx+dy*dy);
+        if(d<120){
+          ctx.beginPath();
+          ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);
+          ctx.strokeStyle='rgba(0,229,176,'+((.12*(1-d/120)))+')';
+          ctx.lineWidth=.4;ctx.stroke();
+        }
       }
     }
+    requestAnimationFrame(draw);
   }
-  const edgeGeo = new THREE.BufferGeometry();
-  edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgeVerts, 3));
-  const edgeMat = new THREE.LineBasicMaterial({ color: 0x38e8ff, transparent: true, opacity: 0.06 });
-  scene.add(new THREE.LineSegments(edgeGeo, edgeMat));
-
-  // ── Central sphere ──
-  const sphereGeo = new THREE.IcosahedronGeometry(1.4, 4);
-  const sphereMat = new THREE.MeshBasicMaterial({
-    color: 0x4fa3e3,
-    wireframe: true,
-    transparent: true,
-    opacity: 0.12
-  });
-  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-  scene.add(sphere);
-
-  // ── Inner glowing orb ──
-  const orbGeo = new THREE.SphereGeometry(0.6, 32, 32);
-  const orbMat = new THREE.MeshBasicMaterial({
-    color: 0xe8c96a,
-    transparent: true,
-    opacity: 0.04
-  });
-  const orb = new THREE.Mesh(orbGeo, orbMat);
-  scene.add(orb);
-
-  // ── Ring ──
-  const ringGeo = new THREE.TorusGeometry(2.2, 0.008, 2, 200);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xe8c96a, transparent: true, opacity: 0.2 });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
-  ring.rotation.x = Math.PI / 2.5;
-  scene.add(ring);
-
-  const ring2Geo = new THREE.TorusGeometry(1.8, 0.005, 2, 200);
-  const ring2Mat = new THREE.MeshBasicMaterial({ color: 0x38e8ff, transparent: true, opacity: 0.15 });
-  const ring2 = new THREE.Mesh(ring2Geo, ring2Mat);
-  ring2.rotation.x = Math.PI / 3;
-  ring2.rotation.y = Math.PI / 6;
-  scene.add(ring2);
-
-  // ── Mouse influence ──
-  const mouse = { x: 0, y: 0 };
-  window.addEventListener('mousemove', e => {
-    mouse.x = (e.clientX / window.innerWidth - 0.5) * 2;
-    mouse.y = -(e.clientY / window.innerHeight - 0.5) * 2;
-  });
-
-  let t = 0;
-  function animate() {
-    requestAnimationFrame(animate);
-    t += 0.005;
-
-    sphere.rotation.y = t * 0.3;
-    sphere.rotation.x = t * 0.15;
-    ring.rotation.z = t * 0.2;
-    ring2.rotation.z = -t * 0.25;
-    nodes.rotation.y = t * 0.05;
-    grid.rotation.z = t * 0.01;
-
-    // Subtle camera parallax
-    camera.position.x += (mouse.x * 0.8 - camera.position.x) * 0.02;
-    camera.position.y += (mouse.y * 0.5 - camera.position.y) * 0.02;
-    camera.lookAt(0, 0, 0);
-
-    // Pulse orb
-    const scale = 1 + Math.sin(t * 2) * 0.15;
-    orb.scale.set(scale, scale, scale);
-
-    renderer.render(scene, camera);
-  }
-  animate();
+  draw();
 })();
 
-// ── Custom Cursor ─────────────────────────────────────────────────────────────
-const cursor = document.getElementById('cursor');
-const ring = document.getElementById('cursor-ring');
-let cx = 0, cy = 0, rx = 0, ry = 0;
-document.addEventListener('mousemove', e => { cx = e.clientX; cy = e.clientY; });
-(function animCursor() {
-  requestAnimationFrame(animCursor);
-  rx += (cx - rx) * 0.12;
-  ry += (cy - ry) * 0.12;
-  cursor.style.left = cx + 'px';
-  cursor.style.top  = cy + 'px';
-  ring.style.left   = rx + 'px';
-  ring.style.top    = ry + 'px';
-})();
-document.querySelectorAll('a, button, .feat-card, .pain-card').forEach(el => {
-  el.addEventListener('mouseenter', () => { ring.style.transform = 'translate(-50%,-50%) scale(1.8)'; ring.style.borderColor = 'rgba(56,232,255,0.6)'; });
-  el.addEventListener('mouseleave', () => { ring.style.transform = 'translate(-50%,-50%) scale(1)'; ring.style.borderColor = 'rgba(232,201,106,0.5)'; });
-});
-
-// ── Nav scroll state ───────────────────────────────────────────────────────
-window.addEventListener('scroll', () => {
-  document.getElementById('main-nav').classList.toggle('scrolled', window.scrollY > 60);
-});
-
-// ── Particles ─────────────────────────────────────────────────────────────
-(function() {
-  const container = document.getElementById('particles');
-  const colors = ['#e8c96a', '#38e8ff', '#9d6fff', '#ff5f8f', '#ffffff'];
-  for (let i = 0; i < 30; i++) {
-    const p = document.createElement('div');
-    p.className = 'particle';
-    const size = Math.random() * 3 + 1;
-    const color = colors[Math.floor(Math.random() * colors.length)];
-    p.style.cssText = `
-      width:${size}px; height:${size}px;
-      background:${color};
-      left:${Math.random()*100}%;
-      animation-duration:${8 + Math.random()*12}s;
-      animation-delay:${-Math.random()*10}s;
-      opacity:${0.3 + Math.random()*0.4};
-    `;
-    container.appendChild(p);
-  }
+// ── SCROLL REVEAL ──
+(function(){
+  var obs=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){e.target.classList.add('vis');obs.unobserve(e.target);}
+    });
+  },{threshold:.1});
+  document.querySelectorAll('.rv').forEach(function(el){obs.observe(el);});
 })();
 
-// ── GSAP Animations ───────────────────────────────────────────────────────
-gsap.registerPlugin(ScrollTrigger);
-
-// Hero entrance
-const tl = gsap.timeline({ delay: 0.3 });
-tl.to('#hero-eyebrow', { opacity: 1, y: 0, duration: 1, ease: 'power3.out' })
-  .to('#hero-title',   { opacity: 1, y: 0, duration: 1.2, ease: 'power3.out' }, '-=0.6')
-  .to('#hero-sub',     { opacity: 1, y: 0, duration: 0.9, ease: 'power3.out' }, '-=0.6')
-  .to('#hero-cta',     { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }, '-=0.5')
-  .to('#scroll-hint',  { opacity: 1, duration: 0.8 }, '-=0.2');
-
-// Pain cards stagger
-gsap.fromTo('#pain-cards .pain-card',
-  { opacity: 0, y: 50 },
-  {
-    opacity: 1, y: 0,
-    duration: 0.7,
-    stagger: 0.12,
-    ease: 'power3.out',
-    scrollTrigger: { trigger: '#pain-cards', start: 'top 80%' }
-  }
-);
-
-// Feature cards stagger
-gsap.fromTo('#features-grid .feat-card',
-  { opacity: 0, y: 40 },
-  {
-    opacity: 1, y: 0,
-    duration: 0.6,
-    stagger: 0.1,
-    ease: 'power3.out',
-    scrollTrigger: { trigger: '#features-grid', start: 'top 75%' }
-  }
-);
-
-// Stats counter animation
-const statEls = document.querySelectorAll('.stat-number[data-target]');
-statEls.forEach(el => {
-  const target = +el.dataset.target;
-  ScrollTrigger.create({
-    trigger: el,
-    start: 'top 80%',
-    once: true,
-    onEnter: () => {
-      gsap.to({ val: 0 }, {
-        val: target,
-        duration: 2,
-        ease: 'power2.out',
-        onUpdate: function() { el.textContent = Math.round(this.targets()[0].val); }
-      });
-    }
-  });
+// ── STAGGER MODULE CARDS ──
+document.querySelectorAll('.mcard').forEach(function(c,i){
+  c.style.transitionDelay=(i*80)+'ms';
 });
 
-// Steps timeline
-gsap.fromTo('#steps-timeline .step-row',
-  { opacity: 0, x: -40 },
-  {
-    opacity: 1, x: 0,
-    duration: 0.7,
-    stagger: 0.18,
-    ease: 'power3.out',
-    scrollTrigger: { trigger: '#steps-timeline', start: 'top 75%' }
+// ── COUNTER ANIMATION ──
+(function(){
+  var animated=false;
+  function startCounters(){
+    if(animated)return;animated=true;
+    document.querySelectorAll('.sn').forEach(function(el){
+      var target=el.textContent;
+      var num=parseFloat(target);
+      if(isNaN(num))return;
+      var suffix=target.replace(String(num),'');
+      var start=0,dur=1800,step=16;
+      var timer=setInterval(function(){
+        start+=step;
+        var p=Math.min(start/dur,1);
+        var val=Math.round(num*p);
+        el.textContent=val+suffix;
+        if(p>=1)clearInterval(timer);
+      },16);
+    });
   }
-);
-
-// Pipeline nodes pulse
-const pipeNodes = document.querySelectorAll('.pipe-circle');
-let currentNode = 0;
-setInterval(() => {
-  pipeNodes.forEach(n => n.classList.remove('active'));
-  currentNode = (currentNode + 1) % pipeNodes.length;
-  pipeNodes[currentNode].classList.add('active');
-}, 1200);
-
-// Parallax chapter numbers
-document.querySelectorAll('.chapter-number').forEach(el => {
-  gsap.to(el, {
-    y: -100,
-    ease: 'none',
-    scrollTrigger: {
-      trigger: el.closest('section'),
-      start: 'top bottom',
-      end: 'bottom top',
-      scrub: 1
-    }
-  });
-});
-
-// CTA headline reveal
-gsap.fromTo('.cta-headline',
-  { opacity: 0, y: 60 },
-  {
-    opacity: 1, y: 0,
-    duration: 1.2,
-    ease: 'power3.out',
-    scrollTrigger: { trigger: '.cta-headline', start: 'top 80%' }
-  }
-);
-
+  var obs=new IntersectionObserver(function(e){
+    e.forEach(function(entry){if(entry.isIntersecting)startCounters();});
+  },{threshold:.3});
+  var stats=document.querySelector('.stats');
+  if(stats)obs.observe(stats);
+})();
 </script>
 </body>
 </html>
 """
 
-components.html(LANDING_HTML, height=10000, scrolling=False)
+# ─────────────────────────────────────────────────────────────
+# RENDER LANDING OR APP
+# ─────────────────────────────────────────────────────────────
+
+if not st.session_state.show_app:
+    # Hide all Streamlit chrome while landing page is shown
+    st.markdown("""
+    <style>
+    #MainMenu, header, footer, [data-testid="stToolbar"],
+    [data-testid="stSidebar"], [data-testid="collapsedControl"] {display:none!important}
+    .block-container {padding:0!important;max-width:100%!important}
+    section.main > div {padding:0!important}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Render the full landing page
+    components.html(LANDING_HTML, height=4200, scrolling=True)
+
+    # Button to enter app directly within Streamlit
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        if st.button("⬡ Enter App", use_container_width=True):
+            st.session_state.show_app = True
+            st.rerun()
+
+else:
+    # ── AFTER ENTERING APP: restore normal Streamlit styles ──
+    st.markdown("""
+    <style>
+    #MainMenu {visibility:hidden}
+    footer {visibility:hidden}
+    header {visibility:hidden}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ─── CACHED DB HELPERS ───────────────────────────────────
+    @st.cache_data(ttl=60)
+    def _cached_hero_stats():
+        return (get_total_registered_users(), get_logins_today(), get_database_stats())
+
+    @st.cache_data(ttl=30)
+    def _cached_admin_metrics():
+        return (get_total_registered_users(), get_logins_today(), get_all_user_logs())
+
+    @st.cache_data(ttl=300)
+    def _cached_user_api_key(username: str):
+        return get_user_api_key(username)
+
+    def html_to_pdf_bytes(html_string):
+        styled_html = f"""
+        <html><head><meta charset="UTF-8">
+        <style>
+        @page {{size:400mm 297mm;margin:10mm}}
+        body{{font-size:14pt;font-family:"Segoe UI","Helvetica",sans-serif;line-height:1.5;color:#000}}
+        h1,h2,h3{{color:#2f4f6f}}
+        table{{width:100%;border-collapse:collapse;margin-bottom:15px}}
+        td{{padding:4px;vertical-align:top;border:1px solid #ccc}}
+        .section-title{{background-color:#e0e0e0;font-weight:bold;padding:6px;margin-top:10px}}
+        .box{{padding:8px;margin-top:6px;background-color:#f9f9f9;border-left:4px solid #999}}
+        ul{{margin:.5em 0;padding-left:1.5em}}
+        li{{margin-bottom:5px}}
+        </style></head><body>{html_string}</body></html>"""
+        pdf_io = BytesIO()
+        pisa.CreatePDF(styled_html, dest=pdf_io)
+        pdf_io.seek(0)
+        return pdf_io
+
+    # ── SESSION INIT ──────────────────────────────────────────
+    create_user_table()
+
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "username" not in st.session_state:
+        st.session_state.username = ""
+    if "otp_verified" not in st.session_state:
+        st.session_state.otp_verified = False
+
+    # ── BACK TO LANDING BUTTON ────────────────────────────────
+    if st.sidebar.button("← Back to Landing Page"):
+        st.session_state.show_app = False
+        st.rerun()
+
+    # ─────────────────────────────────────────────────────────
+    # THE REST OF YOUR ORIGINAL main.py CODE GOES HERE
+    # (all your login, tab logic, dashboard, resume builder, etc.)
+    # This section is a clean drop-in replacement for the top of your file.
+    # ─────────────────────────────────────────────────────────
+
+    # NOTE: Paste all your existing post-imports code from your original
+    # main.py here — starting from the notification helpers, login page,
+    # tab rendering, etc. The structure above integrates the landing page
+    # seamlessly as a pre-auth welcome screen.
+
+    st.info("✅ Landing page integrated. Paste your original app logic below this comment.")
